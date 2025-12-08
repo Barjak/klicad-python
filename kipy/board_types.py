@@ -154,6 +154,17 @@ class Track(BoardItem):
         )
 
     @property
+    def locked(self) -> bool:
+        return self._proto.locked == LockedState.LS_LOCKED
+
+    @locked.setter
+    def locked(self, locked: bool):
+        self._proto.locked = {
+            True: LockedState.LS_LOCKED,
+            False: LockedState.LS_UNLOCKED,
+        }.get(locked, LockedState.LS_UNLOCKED)
+
+    @property
     def net(self) -> Net:
         return Net(self._proto.net)
 
@@ -213,6 +224,17 @@ class ArcTrack(BoardItem):
             f"ArcTrack(start={self.start}, mid={self.mid}, end={self.end}, "
             f"layer={BoardLayer.Name(self.layer)}, net={self.net.name})"
         )
+
+    @property
+    def locked(self) -> bool:
+        return self._proto.locked == LockedState.LS_LOCKED
+
+    @locked.setter
+    def locked(self, locked: bool):
+        self._proto.locked = {
+            True: LockedState.LS_LOCKED,
+            False: LockedState.LS_UNLOCKED,
+        }.get(locked, LockedState.LS_UNLOCKED)
 
     @property
     def net(self) -> Net:
