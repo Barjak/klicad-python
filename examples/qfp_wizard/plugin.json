@@ -1,0 +1,13 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "org.kicad.generators.qfp",
+    "name": "QFP",
+    "description": "Quad Flat Package (QFP) footprint wizard",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.9"
+    },
+    "generator": {
+        "entrypoint": "qfp.py"
+    }
+}
