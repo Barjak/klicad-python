@@ -10,7 +10,7 @@ test-docs:
 build-docs:
   image: docker:stable
   services:
-    - docker:dind
+    - docker:28-dind
   stage: build
   tags:
     - gitlab-org-docker
