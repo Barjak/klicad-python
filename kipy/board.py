@@ -702,6 +702,16 @@ class Board:
         cmd.origin.CopyFrom(origin.proto)
         self._kicad.send(cmd, Empty)
 
+    def get_layer_name(self, layer: board_types_pb2.BoardLayer.ValueType) -> str:
+        """Retrieves the user-visible name of a given layer, which may be a default value like "F.Cu"
+        or may have been customized by the user.  This method does not apply to dielectric layers.
+
+        .. versionadded:: 0.6.0 (KiCad 9.0.8)"""
+        cmd = board_commands_pb2.GetBoardLayerName()
+        cmd.board.CopyFrom(self._doc)
+        cmd.layer = layer
+        return self._kicad.send(cmd, board_commands_pb2.BoardLayerNameResponse).name
+
     @overload
     def expand_text_variables(self, text: str) -> str:
         ...
