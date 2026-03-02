@@ -1,4 +1,4 @@
-FROM registry.gitlab.com/kicad/kicad-ci/source_containers/master/fedora:38 as build-env
+FROM registry.gitlab.com/kicad/kicad-ci/source_containers/master/fedora:42 as build-env
 USER root
 
 WORKDIR /src
