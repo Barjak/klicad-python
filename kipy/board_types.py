@@ -155,6 +155,9 @@ class Track(BoardItem):
 
     @property
     def locked(self) -> bool:
+        """
+        .. versionadded:: 0.5.0
+        """
         return self._proto.locked == LockedState.LS_LOCKED
 
     @locked.setter
@@ -227,6 +230,9 @@ class ArcTrack(BoardItem):
 
     @property
     def locked(self) -> bool:
+        """
+        .. versionadded:: 0.5.0
+        """
         return self._proto.locked == LockedState.LS_LOCKED
 
     @locked.setter

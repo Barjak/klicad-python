@@ -80,6 +80,8 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 ### 0.6.0 (TBD)
 
 - Fix missing conversion of rectangles into polygons when rotating by non-cardinal amounts (#86)
+- Move to `pynng` 0.9.0 (John Hagen, !37)
+- Add `locked` properties to `Track` and `ArcTrack` (Anton Lazarev, !34)
 
 ### 0.5.0 (October 13, 2025)
 
