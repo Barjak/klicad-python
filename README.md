@@ -83,6 +83,7 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 - Move to `pynng` 0.9.0 (John Hagen, !37)
 - Add `locked` properties to `Track` and `ArcTrack` (Anton Lazarev, !34)
 - Add `Board.get_layer_name` (KiCad 9.0.8) (#94)
+- Ensure `PolygonWithHoles` outline and holes are closed shapes (#73)
 
 ### 0.5.0 (October 13, 2025)
 

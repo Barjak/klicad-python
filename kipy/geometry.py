@@ -581,12 +581,16 @@ class PolygonWithHoles(Wrapper):
     @outline.setter
     def outline(self, outline: PolyLine):
         self._proto.outline.CopyFrom(outline._proto)
+        # Outline must be a closed shape
+        self._proto.outline.closed = True
 
     @property
     def holes(self) -> list[PolyLine]:
         return [PolyLine(proto_ref=hole) for hole in self._proto.holes]
 
     def add_hole(self, hole: PolyLine):
+        # Holes must be a closed shape
+        hole.closed = True
         self._proto.holes.append(hole._proto)
 
     def remove_hole(self, hole: PolyLine):
