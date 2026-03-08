@@ -38,6 +38,9 @@ class Project:
         if self._doc.type != DocumentType.DOCTYPE_PROJECT:
             self._doc.type = DocumentType.DOCTYPE_PROJECT
 
+    def __repr__(self) -> str:
+        return f"Project(name={self.name!r}, path={self.path!r})"
+
     @property
     def document(self) -> DocumentSpecifier:
         return self._doc
