@@ -31,7 +31,8 @@ from google.protobuf.empty_pb2 import Empty
 class Project:
     def __init__(self, kicad: KiCadClient, document: DocumentSpecifier):
         self._kicad = kicad
-        self._doc = document
+        self._doc = DocumentSpecifier()
+        self._doc.CopyFrom(document)
 
         # TODO clean this up; no identifier for project right now
         if self._doc.type != DocumentType.DOCTYPE_PROJECT:
