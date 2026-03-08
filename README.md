@@ -85,6 +85,7 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 - Add `Board.get_layer_name` (KiCad 9.0.8) (#94)
 - Ensure `PolygonWithHoles` outline and holes are closed shapes (#73)
 - Fix `Project` taking over the document passed into it (#78)
+- Fix missing setter on `Field.name` (#87)
 
 ### 0.5.0 (October 13, 2025)
 

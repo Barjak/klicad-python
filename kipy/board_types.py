@@ -838,6 +838,10 @@ class Field(BoardItem):
     def name(self) -> str:
         return self._proto.name
 
+    @name.setter
+    def name(self, name: str):
+        self._proto.name = name
+
     @property
     def layer(self) -> BoardLayer.ValueType:
         return self._proto.text.layer
