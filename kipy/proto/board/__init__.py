@@ -21,3 +21,4 @@
 # flake8: noqa
 
 from .board_types_pb2 import *
+from .board_jobs_pb2 import *

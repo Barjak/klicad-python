@@ -44,15 +44,25 @@ from kipy.board_types import (
 from kipy.client import ApiError, KiCadClient
 from kipy.common_types import Color, Commit, TitleBlockInfo, TextAttributes
 from kipy.geometry import Box2, PolygonWithHoles, Vector2
+from kipy.board_jobs import (
+    Export3DSettings,
+    Ipc2581ExportSettings,
+    JobResult,
+    PlotSettings,
+    PositionExportSettings,
+    RenderSettings,
+)
 from kipy.project import Project, NetClass
 from kipy.proto.board import board_types_pb2
 from kipy.proto.common.commands import editor_commands_pb2, project_commands_pb2
 from kipy.proto.common.envelope_pb2 import ApiStatusCode
+from kipy.proto.common.types.enums_pb2 import Units
 from kipy.util import pack_any
 from kipy.wrapper import Item, Wrapper
 
 from kipy.proto.common.commands import Ping
 from kipy.proto.common.types import DocumentSpecifier, KIID, KiCadObjectType, base_types_pb2
+from kipy.proto.common.types import jobs_pb2
 from kipy.proto.common.commands.editor_commands_pb2 import (
     BeginCommit, BeginCommitResponse, CommitAction,
     EndCommit, EndCommitResponse,
@@ -64,6 +74,7 @@ from kipy.proto.common.commands.editor_commands_pb2 import (
 )
 from kipy.proto.board import board_pb2
 from kipy.proto.board import board_commands_pb2
+from kipy.proto.board import board_jobs_pb2
 
 # Re-exported protobuf enum types
 from kipy.proto.board.board_pb2 import (    # noqa
@@ -75,6 +86,41 @@ from kipy.proto.board.board_types_pb2 import ( #noqa
 from kipy.proto.board.board_commands_pb2 import ( #noqa
     BoardOriginType
 )
+from kipy.proto.board.board_jobs_pb2 import (  # noqa
+    PlotDrillMarks,
+    Board3DFormat,
+    RenderFormat,
+    RenderQuality,
+    RenderBackgroundStyle,
+    RenderSide,
+    BoardJobPaginationMode,
+    DrillFormat,
+    PositionSide,
+    PositionFormat,
+    Ipc2581Version,
+    OdbCompression,
+    StatsOutputFormat,
+)
+from kipy.proto.common.types.enums_pb2 import (  # noqa
+    Units,
+)
+
+BoardJobCommand = Union[
+    board_jobs_pb2.RunBoardJobExport3D,
+    board_jobs_pb2.RunBoardJobExportRender,
+    board_jobs_pb2.RunBoardJobExportSvg,
+    board_jobs_pb2.RunBoardJobExportDxf,
+    board_jobs_pb2.RunBoardJobExportPdf,
+    board_jobs_pb2.RunBoardJobExportPs,
+    board_jobs_pb2.RunBoardJobExportGerbers,
+    board_jobs_pb2.RunBoardJobExportDrill,
+    board_jobs_pb2.RunBoardJobExportPosition,
+    board_jobs_pb2.RunBoardJobExportGencad,
+    board_jobs_pb2.RunBoardJobExportIpc2581,
+    board_jobs_pb2.RunBoardJobExportIpcD356,
+    board_jobs_pb2.RunBoardJobExportODB,
+    board_jobs_pb2.RunBoardJobExportStats,
+]
 
 class BoardLayerGraphicsDefaults(Wrapper):
     """The default properties for graphic items added on a given class of board layer"""
@@ -281,7 +327,7 @@ class Board:
         return self._doc.board_filename
 
     def save(self):
-        command = editor_commands_pb2.SaveDocument()
+        command = project_commands_pb2.SaveDocument()
         command.document.CopyFrom(self._doc)
         self._kicad.send(command, Empty)
 
@@ -304,6 +350,242 @@ class Board:
         command = editor_commands_pb2.RevertDocument()
         command.document.CopyFrom(self._doc)
         self._kicad.send(command, Empty)
+
+    def export_3d(
+        self,
+        output_path: str,
+        settings: Optional[Export3DSettings] = None,
+    ) -> JobResult:
+        """Exports the board as a 3D model file."""
+        command = board_jobs_pb2.RunBoardJobExport3D()
+        if settings is not None:
+            command.CopyFrom(settings.proto)
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_render(
+        self,
+        output_path: str,
+        settings: Optional[RenderSettings] = None,
+    ) -> JobResult:
+        """Exports a raytraced 3D render of the board."""
+        command = board_jobs_pb2.RunBoardJobExportRender()
+        if settings is not None:
+            command.CopyFrom(settings.proto)
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_svg(
+        self,
+        output_path: str,
+        plot_settings: Optional[PlotSettings] = None,
+        fit_page_to_board: bool = False,
+        precision: int = 4,
+        page_mode: board_jobs_pb2.BoardJobPaginationMode.ValueType = BoardJobPaginationMode.BJPM_ALL_LAYERS_ONE_PAGE,
+    ) -> JobResult:
+        """Plots the board to SVG."""
+        command = board_jobs_pb2.RunBoardJobExportSvg()
+        if plot_settings is not None:
+            command.plot_settings.CopyFrom(plot_settings.proto)
+        command.fit_page_to_board = fit_page_to_board
+        command.precision = precision
+        command.page_mode = page_mode
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_dxf(
+        self,
+        output_path: str,
+        plot_settings: Optional[PlotSettings] = None,
+        plot_graphic_items_using_contours: bool = False,
+        polygon_mode: bool = False,
+        units: Units.ValueType = Units.U_MM,
+        page_mode: board_jobs_pb2.BoardJobPaginationMode.ValueType = BoardJobPaginationMode.BJPM_ALL_LAYERS_ONE_PAGE,
+    ) -> JobResult:
+        """Exports the board to DXF."""
+        command = board_jobs_pb2.RunBoardJobExportDxf()
+        if plot_settings is not None:
+            command.plot_settings.CopyFrom(plot_settings.proto)
+        command.plot_graphic_items_using_contours = plot_graphic_items_using_contours
+        command.polygon_mode = polygon_mode
+        command.units = units
+        command.page_mode = page_mode
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_pdf(
+        self,
+        output_path: str,
+        plot_settings: Optional[PlotSettings] = None,
+        include_metadata: bool = True,
+        single_document: bool = True,
+        page_mode: board_jobs_pb2.BoardJobPaginationMode.ValueType = BoardJobPaginationMode.BJPM_ALL_LAYERS_ONE_PAGE,
+        background_color: str = "",
+        front_footprint_property_popups: bool = False,
+        back_footprint_property_popups: bool = False,
+    ) -> JobResult:
+        """Plots the board to PDF."""
+        command = board_jobs_pb2.RunBoardJobExportPdf()
+        if plot_settings is not None:
+            command.plot_settings.CopyFrom(plot_settings.proto)
+        command.include_metadata = include_metadata
+        command.single_document = single_document
+        command.page_mode = page_mode
+        command.background_color = background_color
+        command.front_footprint_property_popups = front_footprint_property_popups
+        command.back_footprint_property_popups = back_footprint_property_popups
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_ps(
+        self,
+        output_path: str,
+        plot_settings: Optional[PlotSettings] = None,
+        page_mode: board_jobs_pb2.BoardJobPaginationMode.ValueType = BoardJobPaginationMode.BJPM_ALL_LAYERS_ONE_PAGE,
+        track_width_correction: float = 0.0,
+        x_scale_adjust: float = 1.0,
+        y_scale_adjust: float = 1.0,
+        force_a4: bool = False,
+        use_global_settings: bool = False,
+    ) -> JobResult:
+        """Plots the board to PostScript."""
+        command = board_jobs_pb2.RunBoardJobExportPs()
+        if plot_settings is not None:
+            command.plot_settings.CopyFrom(plot_settings.proto)
+        command.page_mode = page_mode
+        command.track_width_correction = track_width_correction
+        command.x_scale_adjust = x_scale_adjust
+        command.y_scale_adjust = y_scale_adjust
+        command.force_a4 = force_a4
+        command.use_global_settings = use_global_settings
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_gerbers(
+        self,
+        output_path: str,
+        layers: Sequence[board_types_pb2.BoardLayer.ValueType],
+    ) -> JobResult:
+        """Plots the board to Gerber files."""
+        command = board_jobs_pb2.RunBoardJobExportGerbers()
+        command.layers.extend(layers)
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_drill(
+        self,
+        output_path: str,
+        format: board_jobs_pb2.DrillFormat.ValueType = DrillFormat.DF_EXCELLON,
+    ) -> JobResult:
+        """Exports NC drill files from the board."""
+        command = board_jobs_pb2.RunBoardJobExportDrill()
+        command.format = format
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_position(
+        self,
+        output_path: str,
+        settings: Optional[PositionExportSettings] = None,
+    ) -> JobResult:
+        """Exports pick-and-place position files from the board."""
+        command = board_jobs_pb2.RunBoardJobExportPosition()
+        if settings is not None:
+            command.CopyFrom(settings.proto)
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_gencad(
+        self,
+        output_path: str,
+        flip_bottom_pads: bool = False,
+        use_individual_shapes: bool = False,
+        store_origin_coords: bool = False,
+        use_drill_origin: bool = False,
+        use_unique_pins: bool = False,
+    ) -> JobResult:
+        """Exports the board to GenCAD format."""
+        command = board_jobs_pb2.RunBoardJobExportGencad()
+        command.flip_bottom_pads = flip_bottom_pads
+        command.use_individual_shapes = use_individual_shapes
+        command.store_origin_coords = store_origin_coords
+        command.use_drill_origin = use_drill_origin
+        command.use_unique_pins = use_unique_pins
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_ipc2581(
+        self,
+        output_path: str,
+        settings: Optional[Ipc2581ExportSettings] = None,
+    ) -> JobResult:
+        """Exports the board to IPC-2581 format."""
+        command = board_jobs_pb2.RunBoardJobExportIpc2581()
+        if settings is not None:
+            command.CopyFrom(settings.proto)
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_ipc_d356(
+        self,
+        output_path: str,
+    ) -> JobResult:
+        """Exports a board netlist in IPC-D-356 format."""
+        command = board_jobs_pb2.RunBoardJobExportIpcD356()
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_odb(
+        self,
+        output_path: str,
+        drawing_sheet: str = "",
+        variant: str = "",
+        units: Units.ValueType = Units.U_MM,
+        precision: int = 6,
+        compression: board_jobs_pb2.OdbCompression.ValueType = OdbCompression.ODBC_ZIP,
+    ) -> JobResult:
+        """Exports the board to ODB++ format."""
+        command = board_jobs_pb2.RunBoardJobExportODB()
+        command.drawing_sheet = drawing_sheet
+        command.variant = variant
+        command.units = units
+        command.precision = precision
+        command.compression = compression
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
+
+    def export_stats(
+        self,
+        output_path: str,
+        format: board_jobs_pb2.StatsOutputFormat.ValueType = StatsOutputFormat.SOF_REPORT,
+        units: Units.ValueType = Units.U_MM,
+        exclude_footprints_without_pads: bool = False,
+        subtract_holes_from_board_area: bool = False,
+        subtract_holes_from_copper_areas: bool = False,
+    ) -> JobResult:
+        """Exports board statistics."""
+        command = board_jobs_pb2.RunBoardJobExportStats()
+        command.format = format
+        command.units = units
+        command.exclude_footprints_without_pads = exclude_footprints_without_pads
+        command.subtract_holes_from_board_area = subtract_holes_from_board_area
+        command.subtract_holes_from_copper_areas = subtract_holes_from_copper_areas
+        command.job_settings.document.CopyFrom(self._doc)
+        command.job_settings.output_path = output_path
+        return JobResult(self._kicad.send(command, jobs_pb2.RunJobResponse))
 
     def begin_commit(self) -> Commit:
         """Begins a commit transaction on the board, returning a Commit object that can be used to
