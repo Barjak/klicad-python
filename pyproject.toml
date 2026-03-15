@@ -1,6 +1,6 @@
 [project]
 name = "kicad-python"
-version = "0.6.0.dev0"
+version = "0.6.0"
 description = "KiCad API Python Bindings"
 authors = [
     { name = "The KiCad Development Team" },

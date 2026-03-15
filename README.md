@@ -77,7 +77,7 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 
 ## Release History
 
-### 0.6.0 (TBD)
+### 0.6.0 (March 15, 2026)
 
 - Fix missing conversion of rectangles into polygons when rotating by non-cardinal amounts (#86)
 - Move to `pynng` 0.9.0 (John Hagen, !37)
