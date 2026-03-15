@@ -60,6 +60,14 @@ $ python3 ./examples/hello.py
 
 This should print out the version of KiCad you have connected to.
 
+## Headless mode
+
+As of KiCad 11, it is possible to start a headless API server using `kicad-cli api-server`.
+`kicad-python` can do this for you automatically when creating a `KiCad` object.  To test this
+out, you can use the `./examples/headless.py` script.  Running it will start up `kicad-cli` and
+connect to it, optionally opening a file specified as the first argument, and provide a Python
+REPL environment to play around in.
+
 ## Documentation
 
 The documentation created from this repository (via the `docs` directory and the docstrings in the

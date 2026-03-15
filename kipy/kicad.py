@@ -34,9 +34,10 @@ from kipy.common_types import Text, TextBox, CompoundShape
 from kipy.errors import FutureVersionError
 from kipy.geometry import Box2
 from kipy.project import Project
+from kipy.server import KiCadServer, find_kicad_cli
 from kipy.proto.common import commands
 from kipy.proto.common.types import base_types_pb2, DocumentType, DocumentSpecifier
-from kipy.proto.common.commands import base_commands_pb2
+from kipy.proto.common.commands import base_commands_pb2, project_commands_pb2
 from kipy.kicad_api_version import KICAD_API_VERSION
 
 
@@ -121,7 +122,10 @@ class KiCad:
     def __init__(self, socket_path: Optional[str]=None,
                  client_name: Optional[str]=None,
                  kicad_token: Optional[str]=None,
-                 timeout_ms: int=2000):
+                 timeout_ms: int=2000,
+                 headless: bool=False,
+                 kicad_cli_path: Optional[str]=None,
+                 file_path: Optional[str]=None):
         """Creates a connection to a running KiCad instance
 
         :param socket_path: The path to the IPC API socket (leave default to read from the
@@ -133,21 +137,66 @@ class KiCad:
         :param kicad_token: A token that can be provided to the client to uniquely identify a
             KiCad instance.  Leave default to read from the KICAD_API_TOKEN environment variable.
         :param timeout_ms: The maximum time to wait for a response from KiCad, in milliseconds
+        :param headless: Start and connect to a headless `kicad-cli api-server` instance.
+        :param kicad_cli_path: Optional path to `kicad-cli`.
+        :param file_path: Optional path to a board, schematic, or project file to pre-load in headless mode.
         """
+        self._server: Optional[KiCadServer] = None
+
+        if headless:
+            if socket_path is not None:
+                raise ValueError("socket_path cannot be used when headless=True")
+
+            cli_path = find_kicad_cli(kicad_cli_path)
+            server = KiCadServer(cli_path, file_path=file_path)
+            server.start()
+            server.wait_for_ready(timeout_s=max(float(timeout_ms) / 1000.0, 5.0))
+            self._server = server
+            socket_path = server.socket_url
+
         if socket_path is None:
             socket_path = _default_socket_path()
         if client_name is None:
             client_name = _random_client_name()
         if kicad_token is None:
             kicad_token = _default_kicad_token()
-        self._client = KiCadClient(socket_path, client_name, kicad_token, timeout_ms)
+
+        try:
+            self._client = KiCadClient(socket_path, client_name, kicad_token, timeout_ms)
+        except Exception:
+            if self._server is not None:
+                self._server.stop()
+                self._server = None
+            raise
 
     @staticmethod
     def from_client(client: KiCadClient):
         """Creates a KiCad object from an existing KiCad client"""
         k = KiCad.__new__(KiCad)
         k._client = client
+        k._server = None
         return k
+
+    def close(self):
+        """Close the KiCad connection and stop any headless server started by this object."""
+        if hasattr(self, '_client'):
+            self._client.close()
+
+        if self._server is not None:
+            self._server.stop()
+            self._server = None
+
+    def __enter__(self) -> 'KiCad':
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def get_version(self) -> KiCadVersion:
         """Returns the KiCad version as a string, including any package-specific info"""
@@ -215,6 +264,26 @@ class KiCad:
         command.type = doc_type
         response = self._client.send(command, commands.GetOpenDocumentsResponse)
         return response.documents
+
+    def open_document(self, path: str, type: DocumentType.ValueType) -> DocumentSpecifier:
+        """In headless mode, opens a document.  Not currently supported for GUI mode.
+
+        .. versionadded:: 0.7.0
+        """
+        command = project_commands_pb2.OpenDocument()
+        command.path = path
+        command.type = type
+        response = self._client.send(command, project_commands_pb2.OpenDocumentResponse)
+        return response.document
+
+    def close_document(self, document: DocumentSpecifier):
+        """In headless mode, closes an open document.  Not currently supported for GUI mode.
+
+        .. versionadded:: 0.7.0
+        """
+        command = project_commands_pb2.CloseDocument()
+        command.document.CopyFrom(document)
+        self._client.send(command, Empty)
 
     def get_project(self, document: DocumentSpecifier) -> Project:
         """Returns a Project object for the given document"""

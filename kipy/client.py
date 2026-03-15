@@ -34,6 +34,11 @@ class KiCadClient:
         self._timeout_ms = timeout_ms
         self._connected = False
 
+    def close(self):
+        if self._connected:
+            self._conn.close()
+            self._connected = False
+
     def _connect(self):
         if self._connected:
             self._conn.close()
