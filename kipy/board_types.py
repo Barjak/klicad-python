@@ -2565,6 +2565,46 @@ class BoardEditorAppearanceSettings(Wrapper):
         self._proto.ratsnest_display = mode
 
 
+class Group(BoardItem):
+    """Represents a group of items on a board"""
+    
+    def __init__(
+        self, 
+        proto: Optional[board_types_pb2.Group] = None,
+    ):
+        self._proto = board_types_pb2.Group()
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+            
+        self._item_ids = self._proto.items
+        self._unwrapped_items = None
+        
+    @property
+    def id(self) -> KIID:
+        return self._proto.id
+    
+    @property
+    def name(self) -> str:
+        return self._proto.name
+    
+    @property
+    def items(self) -> Sequence[Wrapper]:
+        return self._unwrapped_items
+    
+    @items.setter
+    def items(self, items: Sequence[Wrapper]):
+        """Sets the items in the group, replacing any existing items"""
+        del self._proto.items[:]
+        self._unwrapped_items = items
+        for item in items:
+            self._proto.items.append(item.id)
+    
+    def __repr__(self) -> str:
+        return f"Group(id={self.id}, items={self.items})"
+    
+    
+
 _proto_to_object: Dict[type[Message], type[Wrapper]] = {
     board_types_pb2.Arc: ArcTrack,
     board_types_pb2.BoardGraphicShape: BoardShape,
@@ -2579,6 +2619,7 @@ _proto_to_object: Dict[type[Message], type[Wrapper]] = {
     board_types_pb2.Track: Track,
     board_types_pb2.Via: Via,
     board_types_pb2.Zone: Zone,
+    board_types_pb2.Group: Group,
 }
 
 
