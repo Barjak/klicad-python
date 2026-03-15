@@ -77,6 +77,8 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 
 ## Release History
 
+### 0.7.0 (TBD)
+
 ### 0.6.0 (March 15, 2026)
 
 - Fix missing conversion of rectangles into polygons when rotating by non-cardinal amounts (#86)
