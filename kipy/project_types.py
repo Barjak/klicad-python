@@ -28,7 +28,9 @@ from kipy.wrapper import Wrapper
 class NetClass(Wrapper):
     def __init__(self, proto: project_settings_pb2.NetClass = project_settings_pb2.NetClass()):
         self._proto = proto
-        self.proto.type = project_settings_pb2.NetClassType.NCT_EXPLICIT
+
+        if proto.type == project_settings_pb2.NetClassType.NCT_UNKNOWN:
+            self._proto.type = project_settings_pb2.NetClassType.NCT_EXPLICIT
 
     def __repr__(self) -> str:
         return (
