@@ -351,8 +351,10 @@ class Board:
         ]
 
     def _to_concrete_items(self, items: Sequence[Wrapper]) -> List[BoardItem]:
-        items_converted = []
+        items_converted: List[BoardItem] = []
         for it in items:
+            assert isinstance(it, BoardItem)
+
             if isinstance(it, BoardShape):
                 items_converted.append(to_concrete_board_shape(cast(BoardShape, it)))
             elif isinstance(it, Dimension):
@@ -363,7 +365,7 @@ class Board:
 
     def get_items(
         self, types: Union[KiCadObjectType.ValueType, Sequence[KiCadObjectType.ValueType]]
-    ) -> Sequence[Wrapper]:
+    ) -> Sequence[Item]:
         """Retrieves items from the board, optionally filtering to a single or set of types"""
         command = GetItems()
         command.header.document.CopyFrom(self._doc)
@@ -866,7 +868,7 @@ class Board:
         cmd = board_commands_pb2.CheckPadstackPresenceOnLayers()
         cmd.board.CopyFrom(self._doc)
 
-        items_map = {}
+        items_map: Dict[str, BoardItem] = {}
 
         if isinstance(items, BoardItem):
             cmd.items.append(items.id)
@@ -882,7 +884,7 @@ class Board:
 
         response = self._kicad.send(cmd, board_commands_pb2.PadstackPresenceResponse)
 
-        result = {}
+        result: Dict[BoardItem, Dict[board_types_pb2.BoardLayer.ValueType, bool]] = {}
         for entry in response.entries:
             if entry.item.value not in items_map:
                 continue

@@ -662,7 +662,7 @@ class BoardBezier(BoardShape, Bezier):
         self.control2 = self.control2.rotate(angle, center)
         self.end = self.end.rotate(angle, center)
 
-def to_concrete_board_shape(shape: BoardShape) -> Optional[BoardShape]:
+def to_concrete_board_shape(shape: BoardShape) -> BoardShape:
     cls = {
         "segment": BoardSegment,
         "arc": BoardArc,
@@ -673,7 +673,7 @@ def to_concrete_board_shape(shape: BoardShape) -> Optional[BoardShape]:
         None: None,
     }.get(shape._proto.shape.WhichOneof("geometry"), None)
 
-    return cls(proto_ref=shape._proto) if cls is not None else None
+    return cls(proto_ref=shape._proto) if cls is not None else shape
 
 class BoardText(BoardItem):
     """Represents a free text object, or the text component of a field"""
@@ -1779,7 +1779,7 @@ class FootprintInstance(BoardItem):
             field.text.position = field.text.position.rotate(delta, self.position)
             field.text.attributes.angle += delta.degrees
 
-        updated_items = []
+        updated_items: list[Item] = []
         for item in self.definition.items:
             if isinstance(item, Field):
                 item.text.position = item.text.position.rotate(delta, self.position)
@@ -2500,7 +2500,7 @@ class CenterDimension(Dimension):
         self._proto.center.end.CopyFrom(end.proto)
 
 
-def to_concrete_dimension(dimension: Dimension) -> Optional[Dimension]:
+def to_concrete_dimension(dimension: Dimension) -> Dimension:
     cls = {
         "aligned": AlignedDimension,
         "orthogonal": OrthogonalDimension,
@@ -2510,7 +2510,7 @@ def to_concrete_dimension(dimension: Dimension) -> Optional[Dimension]:
         None: None,
     }.get(dimension._proto.WhichOneof("dimension_style"), None)
 
-    return cls(dimension._proto) if cls is not None else None
+    return cls(dimension._proto) if cls is not None else dimension
 
 
 class BoardEditorAppearanceSettings(Wrapper):
