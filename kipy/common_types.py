@@ -28,6 +28,7 @@ from kipy.geometry import (
     PolygonWithHoles,
     Vector2,
     arc_angle,
+    arc_bounding_box,
     arc_center,
     arc_radius,
     arc_start_angle,
@@ -537,10 +538,7 @@ class Segment(GraphicShape):
 
     def bounding_box(self) -> Box2:
         """Calculates the bounding box of the segment"""
-        box = Box2()
-        box.merge(self.start)
-        box.merge(self.end)
-        return box
+        return Box2.from_points([self.start, self.end])
 
 
 class Arc(GraphicShape):
@@ -608,7 +606,7 @@ class Arc(GraphicShape):
 
     def end_angle(self) -> Optional[float]:
         return arc_end_angle(self.start, self.mid, self.end)
-    
+
     def angle(self) -> Optional[float]:
         """Calculates the angle between the start and end of the arc in radians
 
@@ -617,11 +615,7 @@ class Arc(GraphicShape):
         return arc_angle(self.start, self.mid, self.end)
 
     def bounding_box(self) -> Box2:
-        box = Box2()
-        box.merge(self.start)
-        box.merge(self.end)
-        box.merge(self.mid)
-        return box
+        return arc_bounding_box(self.start, self.mid, self.end)
 
 
 class Circle(GraphicShape):
@@ -658,8 +652,7 @@ class Circle(GraphicShape):
 
     def bounding_box(self) -> Box2:
         """Calculates the bounding box of the circle"""
-        box = Box2()
-        box.merge(self.center)
+        box = Box2.from_pos_size(self.center, Vector2.from_xy(0, 0))
         box.inflate(int(self.radius() + 0.5))
         return box
 

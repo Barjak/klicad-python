@@ -260,6 +260,21 @@ class Box2:
     def from_proto( cls, other: types.Box2) -> Self:
         return cls(other.position, other.size)
 
+    @classmethod
+    def from_points(cls, points: list[Vector2]) -> Self:
+        """Constructs a box that contains all the given points
+
+        .. versionadded:: 0.7.0"""
+        if len(points) == 0:
+            return cls()
+
+        box = cls.from_pos_size(points[0], Vector2.from_xy(0, 0))
+
+        for point in points[1:]:
+            box.merge(point)
+
+        return box
+
     @property
     def pos(self) -> Vector2:
         return Vector2(self._pos_proto)
@@ -441,11 +456,7 @@ class ArcStartMidEnd(Wrapper):
 
     def bounding_box(self) -> Box2:
         """Returns the bounding box of the arc -- not calculated by KiCad; may differ from KiCad's"""
-        box = Box2()
-        box.merge(self.start)
-        box.merge(self.end)
-        box.merge(self.mid)
-        return box
+        return arc_bounding_box(self.start, self.mid, self.end)
 
 class PolyLineNode(Wrapper):
     def __init__(
@@ -776,6 +787,54 @@ def arc_angle(start: Vector2, mid: Vector2, end: Vector2) -> Optional[float]:
         angle2 = (end - center).angle() - (mid - center).angle()
 
         return abs(normalize_angle_pi_radians(angle1) + normalize_angle_pi_radians(angle2))
+
+
+def arc_bounding_box(start: Vector2, mid: Vector2, end: Vector2) -> Box2:
+    """Calculates a bounding box for an arc
+
+    .. versionadded:: 0.7.0"""
+    center = arc_center(start, mid, end)
+    if center is None:
+        return Box2.from_points([start, mid, end])
+
+    radius = arc_radius(start, mid, end)
+    if radius == 0:
+        return Box2.from_points([start, mid, end])
+
+    start_angle = arc_start_angle(start, mid, end)
+    end_angle = arc_end_angle(start, mid, end)
+    assert start_angle is not None
+    assert end_angle is not None
+
+    radius_int = int(radius + 0.5)
+    box = Box2.from_points([start, end])
+
+    if end_angle > start_angle:
+        if start_angle < 0.0 and end_angle > 0.0:
+            box.merge(Vector2.from_xy(center.x + radius_int, center.y))
+
+        if start_angle < (math.pi * 0.5) and end_angle > (math.pi * 0.5):
+            box.merge(Vector2.from_xy(center.x, center.y + radius_int))
+
+        if start_angle < math.pi and end_angle > math.pi:
+            box.merge(Vector2.from_xy(center.x - radius_int, center.y))
+
+        if start_angle < (math.pi * 1.5) and end_angle > (math.pi * 1.5):
+            box.merge(Vector2.from_xy(center.x, center.y - radius_int))
+    else:
+        if start_angle < 0.0 or end_angle > 0.0:
+            box.merge(Vector2.from_xy(center.x + radius_int, center.y))
+
+        if start_angle < (math.pi * 0.5) or end_angle > (math.pi * 0.5):
+            box.merge(Vector2.from_xy(center.x, center.y + radius_int))
+
+        if start_angle < math.pi or end_angle > math.pi:
+            box.merge(Vector2.from_xy(center.x - radius_int, center.y))
+
+        if start_angle < (math.pi * 1.5) or end_angle > (math.pi * 1.5):
+            box.merge(Vector2.from_xy(center.x, center.y - radius_int))
+
+    return box
 
 def arc_start_angle_degrees(start: Vector2, mid: Vector2, end: Vector2) -> Optional[float]:
     """Calculates the arc's starting angle in degrees, normalized to [0, 360)

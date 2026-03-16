@@ -49,6 +49,7 @@ from kipy.geometry import (
     PolygonWithHoles,
     PolyLineNode,
     arc_angle,
+    arc_bounding_box,
     arc_center,
     arc_radius,
     arc_start_angle,
@@ -340,11 +341,7 @@ class ArcTrack(BoardItem):
         return angle*self.radius()
 
     def bounding_box(self) -> Box2:
-        box = Box2()
-        box.merge(self.start)
-        box.merge(self.end)
-        box.merge(self.mid)
-        return box
+        return arc_bounding_box(self.start, self.mid, self.end)
 
 class BoardShape(BoardItem):
     """Represents a graphic shape on a board or footprint"""

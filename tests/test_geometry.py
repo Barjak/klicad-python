@@ -20,7 +20,14 @@
 
 import pytest
 import math
-from kipy.geometry import Box2, Vector2, arc_center, arc_angle, normalize_angle_pi_radians
+from kipy.geometry import (
+    Box2,
+    Vector2,
+    arc_angle,
+    arc_bounding_box,
+    arc_center,
+    normalize_angle_pi_radians,
+)
 
 def test_arc_center_circle():
     start = Vector2.from_xy(0, 0)
@@ -125,3 +132,37 @@ def test_normalize_angle_pi_radians():
     assert normalize_angle_pi_radians(-math.pi / 2) == -math.pi / 2
     assert normalize_angle_pi_radians(3 * math.pi / 2) == -math.pi / 2
     assert normalize_angle_pi_radians(-3 * math.pi / 2) == math.pi / 2
+
+def test_box2_construction():
+    box1 = Box2.from_pos_size(Vector2.from_xy(1, 2), Vector2.from_xy(0, 0))
+    box1.merge(Vector2.from_xy(3, 4))
+    box2 = Box2.from_points([Vector2.from_xy(1, 2), Vector2.from_xy(3, 4)])
+    assert box1.pos == box2.pos
+    assert box1.size == box2.size
+
+def test_seg_bounding_box():
+    box = Box2.from_pos_size(Vector2.from_xy(1, 2), Vector2.from_xy(0, 0))
+    box.merge(Vector2.from_xy(3, 4))
+    assert box.pos == Vector2.from_xy(1, 2)
+    assert box.size == Vector2.from_xy(2, 2)
+
+def test_arc_bounding_box():
+    start = Vector2.from_xy(10000, 0)
+    mid = Vector2.from_xy(-7071, 7071)
+    end = Vector2.from_xy(0, -10000)
+
+    box = arc_bounding_box(start, mid, end)
+
+    assert box.pos == Vector2.from_xy(-10000, -10000)
+    # epsilon because we have a calculated center; won't exactly match KiCad due to rounding
+    assert (box.size - Vector2.from_xy(20000, 20000)).length() < 2
+
+def test_arc_bounding_box_degenerate():
+    start = Vector2.from_xy(1, 2)
+    mid = Vector2.from_xy(2, 3)
+    end = Vector2.from_xy(3, 4)
+
+    box = arc_bounding_box(start, mid, end)
+
+    assert box.pos == Vector2.from_xy(1, 2)
+    assert box.size == Vector2.from_xy(2, 2)
