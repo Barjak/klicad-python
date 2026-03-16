@@ -379,11 +379,17 @@ class Board:
 
     def get_items_by_id(
         self, ids: Union[KIID, Sequence[KIID]]
-    ) -> Sequence[Wrapper]:
-        """Retrieves items from the board by their Id, optionally filtering to a single or set of types."""
+    ) -> Sequence[Item]:
+        """Retrieves items from the board by their KIID (internal unique identifier)
+
+        .. versionadded:: 0.7.0 (KiCad 10.0.0)
+        """
         command = GetItemsById()
         command.header.document.CopyFrom(self._doc)
-        command.items.extend(ids)
+        if isinstance(ids, KIID):
+            command.items.append(ids)
+        else:
+            command.items.extend(ids)
 
         return self._to_concrete_items(
             [unwrap(item) for item in self._kicad.send(command, GetItemsResponse).items]
@@ -450,15 +456,17 @@ class Board:
         return [cast(Zone, item) for item in self.get_items(types=[KiCadObjectType.KOT_PCB_ZONE])]
 
     def get_groups(self) -> Sequence[Group]:
-        """Retrieves all groups on the board"""
+        """Retrieves all groups on the board
+
+        .. versionadded:: 0.7.0 (KiCad 10.0.0)"""
         groups = [cast(Group, item) for item in self.get_items(types=[KiCadObjectType.KOT_PCB_GROUP])]
-        
+
         # Unwrap items in groups
         if len(groups) > 0:
             for group in groups:
                 items = self.get_items_by_id(group._item_ids)
                 group._unwrapped_items = items
-                
+
         return groups
 
     def get_as_string(self) -> str:

@@ -79,6 +79,8 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 
 ### 0.7.0 (TBD)
 
+- Add `Board.get_items_by_id` and groups support via `Board.get_groups` (requires KiCad 10) (Anthonypark, !15)
+
 ### 0.6.0 (March 15, 2026)
 
 - Fix missing conversion of rectangles into polygons when rotating by non-cardinal amounts (#86)

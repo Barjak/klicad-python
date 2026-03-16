@@ -2566,44 +2566,45 @@ class BoardEditorAppearanceSettings(Wrapper):
 
 
 class Group(BoardItem):
-    """Represents a group of items on a board"""
-    
+    """Represents a group of items on a board
+
+    .. versionadded:: 0.7.0 (KiCad 10.0.0)"""
+
     def __init__(
-        self, 
+        self,
         proto: Optional[board_types_pb2.Group] = None,
     ):
         self._proto = board_types_pb2.Group()
 
         if proto is not None:
             self._proto.CopyFrom(proto)
-            
+
         self._item_ids = self._proto.items
-        self._unwrapped_items = None
-        
+        self._unwrapped_items: Optional[Sequence[Item]] = None
+
     @property
     def id(self) -> KIID:
         return self._proto.id
-    
+
     @property
     def name(self) -> str:
         return self._proto.name
-    
+
     @property
-    def items(self) -> Sequence[Wrapper]:
-        return self._unwrapped_items
-    
+    def items(self) -> Sequence[Item]:
+        return self._unwrapped_items if self._unwrapped_items else []
+
     @items.setter
-    def items(self, items: Sequence[Wrapper]):
+    def items(self, items: Sequence[Item]):
         """Sets the items in the group, replacing any existing items"""
         del self._proto.items[:]
         self._unwrapped_items = items
         for item in items:
             self._proto.items.append(item.id)
-    
+
     def __repr__(self) -> str:
         return f"Group(id={self.id}, items={self.items})"
-    
-    
+
 
 _proto_to_object: Dict[type[Message], type[Wrapper]] = {
     board_types_pb2.Arc: ArcTrack,
