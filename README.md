@@ -3,9 +3,10 @@
 `kicad-python` is the official Python bindings for the [KiCad](https://kicad.org) IPC API.  This
 library makes it possible to develop scripts and tools that interact with a running KiCad session.
 
-The KiCad IPC API can be considered in "public beta" state with the release of KiCad 9 (currently
-planned for on or around February 1, 2025).  The existing SWIG-based Python bindings for KiCad's
-PCB editor still exist in KiCad 9, but are in maintenance mode and will not be expanded.
+The KiCad IPC API is available in KiCad 9 or newer, and must be enabled in KiCad preferences before
+API commands will work. The legacy SWIG-based Python bindings for KiCad's PCB editor still exist,
+but are in maintenance mode and will not be expanded.  The SWIG bindings will be removed in a
+future version of KiCad (currently planned for KiCad 11 in 2027).
 
 For more information about the IPC API, please see the
 [KiCad developer documentation](https://dev-docs.kicad.org/en/apis-and-binding/ipc-api/index.html).
@@ -23,7 +24,9 @@ running with the API server enabled in Preferences > Plugins.  This package also
 
 > Note: Unlike the SWIG-based Python bindings, the IPC API requires communication with a running
 > instance of KiCad.  It is not possible to use `kicad-python` to manipulate KiCad design files
-> without KiCad running.
+> without KiCad running.  In KiCad 11 or newer, `kicad-cli` can be used to start an API server
+> to interact with KiCad files without needing a GUI instance of KiCad.  The `KiCad` class can
+> be used to start up a `kicad-cli api-server` session automatically if desired.
 
 ## Contributing
 
