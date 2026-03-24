@@ -24,8 +24,10 @@ from google.protobuf.empty_pb2 import Empty
 
 from kipy.board_types import (
     ArcTrack,
+    Barcode,
     BoardEditorAppearanceSettings,
     BoardItem,
+    ReferenceImage,
     BoardText,
     BoardTextBox,
     Dimension,
@@ -740,6 +742,24 @@ class Board:
             )
         ]
 
+    def get_barcodes(self) -> Sequence[Barcode]:
+        """Retrieves all barcode objects on the board
+
+        .. versionadded:: 0.7.0"""
+        return [
+            cast(Barcode, item)
+            for item in self.get_items(types=[KiCadObjectType.KOT_PCB_BARCODE])
+        ]
+
+    def get_reference_images(self) -> Sequence[ReferenceImage]:
+        """Retrieves all reference image objects on the board
+
+        .. versionadded:: 0.7.0"""
+        return [
+            cast(ReferenceImage, item)
+            for item in self.get_items(types=[KiCadObjectType.KOT_PCB_REFERENCE_IMAGE])
+        ]
+
     def get_zones(self) -> Sequence[Zone]:
         """Retrieves all zones (including rule areas and graphic zones) on the board"""
         return [cast(Zone, item) for item in self.get_items(types=[KiCadObjectType.KOT_PCB_ZONE])]
@@ -1003,6 +1023,15 @@ class Board:
         cmd = editor_commands_pb2.GetTitleBlockInfo()
         cmd.document.CopyFrom(self._doc)
         return TitleBlockInfo(self._kicad.send(cmd, base_types_pb2.TitleBlockInfo))
+
+    def set_title_block_info(self, title_block: TitleBlockInfo):
+        """Sets the title block information for the board
+
+        .. versionadded:: 0.7.0 (with KiCad 10.0.1)"""
+        cmd = editor_commands_pb2.SetTitleBlockInfo()
+        cmd.document.CopyFrom(self._doc)
+        cmd.title_block.CopyFrom(title_block.proto)
+        self._kicad.send(cmd, Empty)
 
     def get_origin(self, origin_type: board_commands_pb2.BoardOriginType.ValueType) -> Vector2:
         """Retrieves the specified (grid or drill/place) board origin

@@ -35,6 +35,7 @@ _any_urls = {
     "type.googleapis.com/kiapi.board.types.Track": board_types_pb2.Track,
     "type.googleapis.com/kiapi.board.types.Arc": board_types_pb2.Arc,
     "type.googleapis.com/kiapi.board.types.Via": board_types_pb2.Via,
+    "type.googleapis.com/kiapi.board.types.Barcode": board_types_pb2.Barcode,
     "type.googleapis.com/kiapi.board.types.BoardText": board_types_pb2.BoardText,
     "type.googleapis.com/kiapi.board.types.BoardTextBox": board_types_pb2.BoardTextBox,
     "type.googleapis.com/kiapi.board.types.BoardGraphicShape": board_types_pb2.BoardGraphicShape,

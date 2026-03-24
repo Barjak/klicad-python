@@ -62,6 +62,8 @@ from kipy.wrapper import Item, Wrapper
 
 # Re-exported protobuf enum types
 from kipy.proto.board.board_types_pb2 import (  # noqa
+    BarcodeErrorCorrection,
+    BarcodeKind,
     PSS_CIRCLE,
     PST_NORMAL,
     BoardLayer,
@@ -809,6 +811,207 @@ class BoardTextBox(BoardItem):
     @value.setter
     def value(self, text: str):
         self._proto.textbox.text = text
+
+
+class Barcode(BoardItem):
+    """Represents a barcode object
+
+    .. versionadded:: 0.7.0 (KiCad 10.0.1)"""
+    def __init__(
+        self,
+        proto: Optional[board_types_pb2.Barcode] = None,
+        proto_ref: Optional[board_types_pb2.Barcode] = None,
+    ):
+        self._proto = proto_ref if proto_ref is not None else board_types_pb2.Barcode()
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    def __repr__(self) -> str:
+        return (
+            f"Barcode(text={self.text}, kind={BarcodeKind.Name(self.kind)}, "
+            f"position={self.position}, layer={BoardLayer.Name(self.layer)})"
+        )
+
+    @property
+    def text(self) -> str:
+        return self._proto.text
+
+    @text.setter
+    def text(self, value: str):
+        self._proto.text = value
+
+    @property
+    def kind(self) -> BarcodeKind.ValueType:
+        return self._proto.kind
+
+    @kind.setter
+    def kind(self, value: BarcodeKind.ValueType):
+        self._proto.kind = value
+
+    @property
+    def error_correction(self) -> BarcodeErrorCorrection.ValueType:
+        return self._proto.error_correction
+
+    @error_correction.setter
+    def error_correction(self, value: BarcodeErrorCorrection.ValueType):
+        self._proto.error_correction = value
+
+    @property
+    def position(self) -> Vector2:
+        return Vector2(self._proto.position)
+
+    @position.setter
+    def position(self, value: Vector2):
+        self._proto.position.CopyFrom(value.proto)
+
+    @property
+    def orientation(self) -> Angle:
+        return Angle(self._proto.orientation)
+
+    @orientation.setter
+    def orientation(self, value: Angle):
+        self._proto.orientation.CopyFrom(value.proto)
+
+    @property
+    def layer(self) -> BoardLayer.ValueType:
+        return self._proto.layer
+
+    @layer.setter
+    def layer(self, value: BoardLayer.ValueType):
+        self._proto.layer = value
+
+    @property
+    def width(self) -> int:
+        return self._proto.width.value_nm
+
+    @width.setter
+    def width(self, value: int):
+        self._proto.width.value_nm = value
+
+    @property
+    def height(self) -> int:
+        return self._proto.height.value_nm
+
+    @height.setter
+    def height(self, value: int):
+        self._proto.height.value_nm = value
+
+    @property
+    def show_text(self) -> bool:
+        return self._proto.show_text
+
+    @show_text.setter
+    def show_text(self, value: bool):
+        self._proto.show_text = value
+
+    @property
+    def text_height(self) -> int:
+        return self._proto.text_height.value_nm
+
+    @text_height.setter
+    def text_height(self, value: int):
+        self._proto.text_height.value_nm = value
+
+    @property
+    def knockout(self) -> bool:
+        return self._proto.knockout
+
+    @knockout.setter
+    def knockout(self, value: bool):
+        self._proto.knockout = value
+
+    @property
+    def knockout_margin(self) -> Vector2:
+        return Vector2(self._proto.knockout_margin)
+
+    @knockout_margin.setter
+    def knockout_margin(self, value: Vector2):
+        self._proto.knockout_margin.CopyFrom(value.proto)
+
+    @property
+    def locked(self) -> bool:
+        return self._proto.locked == LockedState.LS_LOCKED
+
+    @locked.setter
+    def locked(self, locked: bool):
+        self._proto.locked = (
+            LockedState.LS_LOCKED if locked else LockedState.LS_UNLOCKED
+        )
+
+
+class ReferenceImage(BoardItem):
+    """Represents a reference image on a board (a non-plotting bitmap)
+
+    .. versionadded:: 0.7.0 (KiCad 10.0.1)"""
+
+    def __init__(
+        self,
+        proto: Optional[board_types_pb2.ReferenceImage] = None,
+        proto_ref: Optional[board_types_pb2.ReferenceImage] = None,
+    ):
+        self._proto = (
+            proto_ref if proto_ref is not None else board_types_pb2.ReferenceImage()
+        )
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    def __repr__(self) -> str:
+        return (
+            f"ReferenceImage(position={self.position}, layer={BoardLayer.Name(self.layer)}, "
+            f"bytes={len(self.image_data)})"
+        )
+
+    @property
+    def layer(self) -> BoardLayer.ValueType:
+        return self._proto.layer
+
+    @layer.setter
+    def layer(self, value: BoardLayer.ValueType):
+        self._proto.layer = value
+
+    @property
+    def position(self) -> Vector2:
+        return Vector2(self._proto.position)
+
+    @position.setter
+    def position(self, value: Vector2):
+        self._proto.position.CopyFrom(value.proto)
+
+    @property
+    def transform_origin_offset(self) -> Vector2:
+        return Vector2(self._proto.transform_origin_offset)
+
+    @transform_origin_offset.setter
+    def transform_origin_offset(self, value: Vector2):
+        self._proto.transform_origin_offset.CopyFrom(value.proto)
+
+    @property
+    def image_scale(self) -> float:
+        return self._proto.image_scale.value
+
+    @image_scale.setter
+    def image_scale(self, value: float):
+        self._proto.image_scale.value = value
+
+    @property
+    def image_data(self) -> bytes:
+        return self._proto.image_data
+
+    @image_data.setter
+    def image_data(self, value: bytes):
+        self._proto.image_data = value
+
+    @property
+    def locked(self) -> bool:
+        return self._proto.locked == LockedState.LS_LOCKED
+
+    @locked.setter
+    def locked(self, locked: bool):
+        self._proto.locked = (
+            LockedState.LS_LOCKED if locked else LockedState.LS_UNLOCKED
+        )
 
 
 class Field(BoardItem):
@@ -2605,6 +2808,7 @@ class Group(BoardItem):
 
 _proto_to_object: Dict[type[Message], type[Wrapper]] = {
     board_types_pb2.Arc: ArcTrack,
+    board_types_pb2.Barcode: Barcode,
     board_types_pb2.BoardGraphicShape: BoardShape,
     board_types_pb2.BoardText: BoardText,
     board_types_pb2.BoardTextBox: BoardTextBox,
@@ -2614,6 +2818,7 @@ _proto_to_object: Dict[type[Message], type[Wrapper]] = {
     board_types_pb2.FootprintInstance: FootprintInstance,
     board_types_pb2.Net: Net,
     board_types_pb2.Pad: Pad,
+    board_types_pb2.ReferenceImage: ReferenceImage,
     board_types_pb2.Track: Track,
     board_types_pb2.Via: Via,
     board_types_pb2.Zone: Zone,
