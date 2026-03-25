@@ -686,6 +686,87 @@ class Board:
             [unwrap(item) for item in self._kicad.send(command, GetItemsResponse).items]
         )
 
+    def get_items_by_net(
+        self,
+        nets: Union[Net, Sequence[Net]],
+        types: Optional[
+            Union[KiCadObjectType.ValueType, Sequence[KiCadObjectType.ValueType]]
+        ] = None,
+    ) -> Sequence[Item]:
+        """Retrieves items from the board, filtered by one or more nets
+
+        .. versionadded:: 0.7.0 (KiCad 10.0.1)"""
+        command = board_commands_pb2.GetItemsByNet()
+        command.header.document.CopyFrom(self._doc)
+
+        if isinstance(types, int):
+            command.types.append(types)
+        elif types is not None:
+            command.types.extend(types)
+
+        if isinstance(nets, Net):
+            command.nets.append(nets.proto)
+        else:
+            command.nets.extend([net.proto for net in nets])
+
+        return self._to_concrete_items(
+            [unwrap(item) for item in self._kicad.send(command, GetItemsResponse).items]
+        )
+
+    def get_items_by_netclass(
+        self,
+        net_classes: Union[str, Sequence[str]],
+        types: Optional[
+            Union[KiCadObjectType.ValueType, Sequence[KiCadObjectType.ValueType]]
+        ] = None,
+    ) -> Sequence[Item]:
+        """Retrieves items from the board, filtered by one or more net class names
+
+        .. versionadded:: 0.7.0 (KiCad 10.0.1)"""
+        command = board_commands_pb2.GetItemsByNetClass()
+        command.header.document.CopyFrom(self._doc)
+
+        if isinstance(types, int):
+            command.types.append(types)
+        elif types is not None:
+            command.types.extend(types)
+
+        if isinstance(net_classes, str):
+            command.net_classes.append(net_classes)
+        else:
+            command.net_classes.extend(net_classes)
+
+        return self._to_concrete_items(
+            [unwrap(item) for item in self._kicad.send(command, GetItemsResponse).items]
+        )
+
+    def get_connected_items(
+        self,
+        items: Union[BoardItem, KIID, Sequence[Union[BoardItem, KIID]]],
+        types: Optional[
+            Union[KiCadObjectType.ValueType, Sequence[KiCadObjectType.ValueType]]
+        ] = None,
+    ) -> Sequence[Item]:
+        """Retrieves items that are copper-connected to the given source item(s) or item IDs
+
+        .. versionadded:: 0.7.0 (KiCad 10.0.1)"""
+        command = board_commands_pb2.GetConnectedItems()
+        command.header.document.CopyFrom(self._doc)
+
+        if isinstance(types, int):
+            command.types.append(types)
+        elif types is not None:
+            command.types.extend(types)
+
+        source_items = [items] if isinstance(items, (BoardItem, KIID)) else items
+
+        for source in source_items:
+            command.items.append(source.id if isinstance(source, BoardItem) else source)
+
+        return self._to_concrete_items(
+            [unwrap(item) for item in self._kicad.send(command, GetItemsResponse).items]
+        )
+
     def get_tracks(self) -> Sequence[Union[Track, ArcTrack]]:
         """Retrieves all tracks and arc tracks on the board"""
         return [

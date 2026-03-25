@@ -109,14 +109,17 @@ class BoardItem(Item):
 
 
 class Net(Wrapper):
-    def __init__(self, proto: Optional[board_types_pb2.Net] = None):
+    def __init__(self, proto: Optional[board_types_pb2.Net] = None, name: Optional[str] = None):
         self._proto = board_types_pb2.Net()
 
         if proto is not None:
             self._proto.CopyFrom(proto)
 
+        if name:
+            self.name = name
+
     def __repr__(self) -> str:
-        return f"Net(name={self.name}, code={self.code})"
+        return f"Net(name={self.name})"
 
     @property
     def name(self) -> str:
