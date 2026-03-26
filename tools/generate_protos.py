@@ -45,7 +45,9 @@ def generate_protos(input_path: str, output_path: str, protoc: str = _default_pr
            "--python_out=" + output_path,
            "--mypy_out=" + output_path,
            "--proto_path=" + input_path,
-           *proto_sources])
+           "--experimental_allow_proto3_optional",  # Needed for old protoc versions
+           *proto_sources],
+           check=True)
 
     print("Post-processing with protoletariat...")
     subprocess.run([protol,
@@ -55,7 +57,8 @@ def generate_protos(input_path: str, output_path: str, protoc: str = _default_pr
            "--python-out", output_path,
            "protoc",
            "--proto-path", input_path,
-           *proto_sources])
+           *proto_sources],
+           check=True)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -6,6 +6,10 @@ Protocol Buffers compiler (`protoc`).  At the moment, `kicad-python` requires `p
 if it is not available from your platform's package manager.  Make sure `protoc` or `protoc.exe` is
 in your PATH.
 
+You will need `poetry` 2.x to build `kicad-python`.  If your platform's package manager does not
+include a new enough version, you will need to install it manually using one of the options
+described at https://python-poetry.org/docs/
+
 # Building kicad-python
 
 First, run `git submodule update --init` to add KiCad's source code as a submodule.
@@ -23,7 +27,7 @@ environment for `kicad-python` development:
 
 ```sh
 $ sudo apt install python3-poetry # Or whatever other way you want to install Poetry
-$ poetry shell
+$ poetry env activate
 $ poetry install
 ```
 
