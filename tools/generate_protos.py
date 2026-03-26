@@ -56,6 +56,7 @@ def generate_protos(input_path: str, output_path: str, protoc: str = _default_pr
            "--exclude-google-imports",
            "--python-out", output_path,
            "protoc",
+           "--experimental_allow_proto3_optional",  # Needed for old protoc versions
            "--proto-path", input_path,
            *proto_sources],
            check=True)
