@@ -17,11 +17,15 @@ requires-python = ">=3.9"
 dependencies = [
     "protobuf >=5.29, <6",
     "pynng >=0.9.0, <0.10.0",
+    "jsonschema >=4.23.0, <5",
     # 3.10: TypeAlias (mypy-protobuf generated code)
     # 3.11: Self
     # 3.13: @deprecated
     "typing_extensions >=4.13.2 ; python_version < '3.13'",
 ]
+
+[project.scripts]
+kicad-python-packager = "kipy.packaging.cli:main"
 
 [project.urls]
 homepage = "https://kicad.org/"
@@ -33,7 +37,11 @@ issues = "https://gitlab.com/kicad/code/kicad-python/-/issues"
 packages = [
     { include = "kipy" },
 ]
-include = ["**/kipy/**/*.py", "**/kipy/**/*.pyi"]
+include = [
+    "**/kipy/**/*.py",
+    "**/kipy/**/*.pyi",
+    "kipy/packaging/schemas/*.json",
+]
 
 [tool.poetry.dependencies]
 python = "<4.0,>=3.9"
