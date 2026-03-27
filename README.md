@@ -95,6 +95,7 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 - Add support for reference images and `Board.get_reference_images` (requires KiCad 10.0.1)
 - Add `Board.set_title_block_info` (requires KiCad 10.0.1)
 - Add `Board.get_connected_items`, `Board.get_items_by_net`, and `Board.get_items_by_netclass` (requires KiCad 10.0.1)
+- Add `Board.get_design_rules` / `Board.get_custom_design_rules` and setters (requires KiCad 11)
 
 ### 0.6.0 (March 15, 2026)
 

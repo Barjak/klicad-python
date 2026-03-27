@@ -54,6 +54,12 @@ from kipy.board_jobs import (
     PositionExportSettings,
     RenderSettings,
 )
+from kipy.board_rules import (
+    BoardDesignRules,
+    BoardDesignRulesResponse,
+    CustomRule,
+    CustomRulesResponse,
+)
 from kipy.project import Project, NetClass
 from kipy.proto.board import board_types_pb2
 from kipy.proto.common.commands import editor_commands_pb2, project_commands_pb2
@@ -86,7 +92,8 @@ from kipy.proto.board.board_types_pb2 import ( #noqa
     BoardLayer
 )
 from kipy.proto.board.board_commands_pb2 import ( #noqa
-    BoardOriginType
+    BoardOriginType,
+    CustomRulesStatus,
 )
 from kipy.proto.board.board_jobs_pb2 import (  # noqa
     PlotDrillMarks,
@@ -1098,6 +1105,52 @@ class Board:
             board_pb2.BoardLayerClass.BLC_FABRICATION: BoardLayerGraphicsDefaults(reply.defaults.layers[4]),
             board_pb2.BoardLayerClass.BLC_OTHER:       BoardLayerGraphicsDefaults(reply.defaults.layers[5])
         }
+
+    def get_design_rules(self) -> BoardDesignRulesResponse:
+        """Retrieves the board design rules (not including custom rules).
+
+        .. versionadded:: 0.7.0 (with KiCad 11)"""
+        cmd = board_commands_pb2.GetBoardDesignRules()
+        cmd.board.CopyFrom(self._doc)
+        return BoardDesignRulesResponse(
+            self._kicad.send(cmd, board_commands_pb2.BoardDesignRulesResponse)
+        )
+
+    def set_design_rules(self, rules: BoardDesignRules) -> BoardDesignRulesResponse:
+        """Sets the board design rules.
+
+        .. versionadded:: 0.7.0 (with KiCad 11)"""
+        cmd = board_commands_pb2.SetBoardDesignRules()
+        cmd.board.CopyFrom(self._doc)
+        cmd.rules.CopyFrom(rules.proto)
+        return BoardDesignRulesResponse(
+            self._kicad.send(cmd, board_commands_pb2.BoardDesignRulesResponse)
+        )
+
+    def get_custom_design_rules(self) -> CustomRulesResponse:
+        """Retrieves custom design rules and parse status / any error messages.
+
+        .. versionadded:: 0.7.0 (with KiCad 11)"""
+        cmd = board_commands_pb2.GetCustomDesignRules()
+        cmd.board.CopyFrom(self._doc)
+        return CustomRulesResponse(self._kicad.send(cmd, board_commands_pb2.CustomRulesResponse))
+
+    def set_custom_design_rules(
+        self,
+        rules: Union[CustomRule, Sequence[CustomRule]],
+    ) -> CustomRulesResponse:
+        """Sets custom design rules.
+
+        .. versionadded:: 0.7.0 (with KiCad 11)"""
+        cmd = board_commands_pb2.SetCustomDesignRules()
+        cmd.board.CopyFrom(self._doc)
+
+        if isinstance(rules, CustomRule):
+            cmd.rules.append(rules.proto)
+        else:
+            cmd.rules.extend([rule.proto for rule in rules])
+
+        return CustomRulesResponse(self._kicad.send(cmd, board_commands_pb2.CustomRulesResponse))
 
     def get_title_block_info(self) -> TitleBlockInfo:
         """Retrieves the title block information for the board"""
