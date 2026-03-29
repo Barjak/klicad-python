@@ -21,7 +21,7 @@
 import argparse
 import sys
 
-from kipy.packaging.validate import validate_plugin
+from kipy.packaging.validate import validate
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,9 +33,12 @@ def main(argv: list[str] | None = None) -> int:
 
     validate_parser = subparsers.add_parser(
         "validate",
-        help="Validate a plugin directory",
+        help="Validates plugins and PCM packages",
     )
-    validate_parser.add_argument("source_dir", help="Path to plugin directory")
+    validate_parser.add_argument(
+        "path",
+        help="Path to plugin directory, PCM package directory, or PCM .zip archive",
+    )
 
     args = parser.parse_args(argv)
 
@@ -43,9 +46,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help(sys.stderr)
         return 2
 
-    report = validate_plugin(args.source_dir)
+    report = validate(args.path)
 
-    print(f"Validating plugin at: {str(report.root)}")
+    print(f"Validating path: {str(report.root)}")
 
     for message in report.messages:
         output = f"[{message.level}] {message.message}"

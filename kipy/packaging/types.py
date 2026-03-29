@@ -52,6 +52,9 @@ class ValidationReport:
     def add_info(self, message: str, path: str | None = None):
         self.messages.append(ValidationMessage(level="info", message=message, path=path))
 
+    def add(self, message: ValidationMessage):
+        self.messages.append(message)
+
     @property
     def errors(self) -> list[ValidationMessage]:
         return [m for m in self.messages if m.level == "error"]

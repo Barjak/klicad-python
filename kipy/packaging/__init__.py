@@ -19,6 +19,10 @@
 # SOFTWARE.
 
 from kipy.packaging.types import ValidationMessage, ValidationReport
-from kipy.packaging.validate import validate_plugin
+from kipy.packaging.validate import validate
 
-__all__ = ("ValidationMessage", "ValidationReport", "validate_plugin")
+__all__ = (
+	"ValidationMessage",
+	"ValidationReport",
+	"validate"
+)

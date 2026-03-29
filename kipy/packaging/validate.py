@@ -22,10 +22,16 @@ import json
 from importlib.resources import files
 from pathlib import Path
 import re
+import tempfile
 from typing import Any
+import zipfile
 from jsonschema import Draft7Validator
 
-from kipy.packaging.types import ValidationReport
+from kipy.packaging.types import ValidationReport, ValidationMessage
+
+
+_PLUGIN_SCHEMA = "api.v1.schema.json"
+_PCM_SCHEMAS = ("pcm.v2.schema.json", "pcm.v1.schema.json")
 
 
 def validate_plugin(source_dir: str | Path) -> ValidationReport:
@@ -43,7 +49,7 @@ def validate_plugin(source_dir: str | Path) -> ValidationReport:
     plugin_path = root / "plugin.json"
 
     if not plugin_path.exists():
-        report.add_error("plugin.json does not exist")
+        report.add_error("plugin.json does not exist. This tool can only validate IPC API plugins.")
         return report
 
     plugin = _load_plugin_json(plugin_path, report)
@@ -56,6 +62,54 @@ def validate_plugin(source_dir: str | Path) -> ValidationReport:
     _validate_plugin_data(root, plugin, report)
     return report
 
+
+def validate(path: str | Path) -> ValidationReport:
+    candidate = Path(path).expanduser().resolve()
+    report = ValidationReport(root=candidate)
+
+    if candidate.suffix.lower() == ".zip":
+        report.add_info("Validating PCM package archive...")
+
+        if not candidate.exists():
+            report.add_error("PCM package archive does not exist")
+            return report
+
+        if not candidate.is_file():
+            report.add_error("PCM package path is not a file")
+            return report
+
+        with tempfile.TemporaryDirectory(prefix="kicad_packaging_validation_") as tmp_dir:
+            extract_root = Path(tmp_dir)
+
+            try:
+                with zipfile.ZipFile(candidate) as archive:
+                    for item in archive.infolist():
+                        zip_path = Path(item.filename)
+                        if zip_path.is_absolute() or ".." in zip_path.parts:
+                            report.add_error(
+                                "archive contains an unsafe path",
+                                path=item.filename,
+                            )
+                            return report
+
+                    archive.extractall(extract_root)
+            except zipfile.BadZipFile as ex:
+                report.add_error(f"invalid zip archive: {str(ex)}")
+                return report
+            except OSError as ex:
+                report.add_error(f"failed to extract zip archive: {str(ex)}")
+                return report
+
+            _validate_pcm_package_data(extract_root, report)
+            return report
+
+    if candidate.is_dir() and (candidate / "metadata.json").exists():
+
+        report.add_info("Found metadata.json; validating as PCM package")
+        _validate_pcm_package_data(candidate, report)
+        return report
+
+    return validate_plugin(candidate)
 
 def _load_plugin_json(
     plugin_path: Path,
@@ -111,17 +165,22 @@ def _validate_requirements(root: Path, report: ValidationReport):
 
 
 def _validate_plugin_schema(plugin: dict[str, Any], report: ValidationReport):
+    if "$schema" not in plugin:
+        report.add_error("plugin.json must include a $schema reference")
+    elif "https://go.kicad.org/api/schemas/v" not in plugin["$schema"]:
+        report.add_error(f"unexpected schema URI: {plugin['$schema']}")
+
     try:
         schema_text = (
             files("kipy.packaging.schemas")
-            .joinpath("api.v1.schema.json")
+            .joinpath(_PLUGIN_SCHEMA)
             .read_text(encoding="utf-8")
         )
         schema = json.loads(schema_text)
     except Exception as e:
         report.add_error(
             f"failed to read plugin schema file: {str(e)}",
-            path="kipy.packaging.schemas:api.v1.schema.json",
+            path=f"kipy.packaging.schemas:{_PLUGIN_SCHEMA}",
         )
         return
 
@@ -130,7 +189,7 @@ def _validate_plugin_schema(plugin: dict[str, Any], report: ValidationReport):
     for error in sorted(validator.iter_errors(plugin), key=lambda current: list(current.path)):
         report.add_error(
             f"schema validation error: {error.message}",
-            path=_format_schema_error_path(error.path),
+            path=f"plugin.json{_format_schema_error_path(error.path)}",
         )
 
 
@@ -183,6 +242,94 @@ def _validate_plugin_data(root: Path, plugin: dict[str, Any], report: Validation
                 )
 
 
+def _validate_pcm_package_data(root: Path, report: ValidationReport):
+    metadata = _load_metadata_json(root, report)
+    if metadata is None:
+        return
+
+    if not _validate_pcm_schema(metadata, report):
+        return
+
+    if "versions" in metadata:
+        for version in metadata["versions"]:
+            if "download_sha256" in version or "download_url" in version:
+                report.add_error(
+                    "metadata.json inside the archive must not contain download_* keys",
+                    path="metadata.json",
+                )
+
+    if metadata["type"] != "plugin":
+        report.add_info("package is not a plugin; no further validation to do")
+        return
+
+    plugins_dir = root / "plugins"
+    if not plugins_dir.exists() or not plugins_dir.is_dir():
+        report.add_error("PCM package is missing plugins directory", path="plugins")
+        return
+
+    plugin_report = validate_plugin(plugins_dir)
+    for message in plugin_report.messages:
+        if message.path is not None:
+            message.path = f"plugins/{message.path}"
+        report.add(message)
+
+def _validate_pcm_schema(metadata: dict[str, Any], report: ValidationReport) -> bool:
+    all_errors: dict[str, list[ValidationMessage]] = {}
+
+    if "$schema" not in metadata:
+        report.add_error("metadata.json must include a $schema reference")
+    elif "https://go.kicad.org/pcm/schemas/v" not in metadata["$schema"]:
+        report.add_error(f"unexpected schema URI: {metadata['$schema']}")
+
+    for schema_version in _PCM_SCHEMAS:
+        try:
+            schema_text = files("kipy.packaging.schemas").joinpath(schema_version).read_text(encoding="utf-8")
+            schema = json.loads(schema_text)
+        except Exception as ex:
+            report.add_error(f"failed to read schema '{schema_version}': {str(ex)}")
+            continue
+
+        validator = Draft7Validator(schema)
+        errors: list[ValidationMessage] = []
+
+        for error in sorted(validator.iter_errors(metadata), key=lambda current: list(current.path)):
+            errors.append(
+                ValidationMessage(
+                    message=f"schema validation error: {error.message}",
+                    path=f"metadata.json{_format_schema_error_path(error.path)}",
+                    level="error"
+                )
+            )
+
+        # If we pass validation on any schema version we're OK
+        if len(errors) == 0:
+            return True
+
+        all_errors[schema_version] = errors
+
+    for message in all_errors[_PCM_SCHEMAS[0]]:
+        report.add(message)
+
+    return False
+
+def _load_metadata_json(root: Path, report: ValidationReport) -> dict[str, Any] | None:
+    metadata_path = root / "metadata.json"
+
+    if not metadata_path.exists():
+        report.add_error("PCM package must have a metadata.json in its root")
+        return None
+
+    try:
+        data = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except OSError as ex:
+        report.add_error(f"failed to read metadata.json: {str(ex)}")
+        return None
+    except json.JSONDecodeError as ex:
+        report.add_error(f"invalid metadata.json: {str(ex)}")
+        return None
+
+    return data
+
 def _validate_file_path(
     root: Path,
     value: str,
@@ -213,11 +360,8 @@ def _validate_file_path(
 
 def _format_schema_error_path(path: Any) -> str:
     parts = list(path)
+    output = ""
 
-    if len(parts) == 0:
-        return "plugin.json"
-
-    output = "plugin.json"
     for part in parts:
         if isinstance(part, int):
             output += f"[{part}]"
