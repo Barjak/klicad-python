@@ -20,6 +20,7 @@
 
 import pytest
 import math
+from kipy.common_types import Circle
 from kipy.geometry import (
     Box2,
     Vector2,
@@ -28,6 +29,7 @@ from kipy.geometry import (
     arc_center,
     normalize_angle_pi_radians,
 )
+from kipy.proto.common.types import base_types_pb2
 
 def test_arc_center_circle():
     start = Vector2.from_xy(0, 0)
@@ -157,6 +159,16 @@ def test_arc_bounding_box():
     # epsilon because we have a calculated center; won't exactly match KiCad due to rounding
     assert (box.size - Vector2.from_xy(20000, 20000)).length() < 2
 
+def test_arc_bounding_box_long_sweep():
+    start = Vector2.from_xy(5, 0)
+    mid = Vector2.from_xy(0, 5)
+    end = Vector2.from_xy(3, 4)
+
+    box = arc_bounding_box(start, mid, end)
+
+    assert box.pos == Vector2.from_xy(-5, -5)
+    assert box.size == Vector2.from_xy(10, 10)
+
 def test_arc_bounding_box_degenerate():
     start = Vector2.from_xy(1, 2)
     mid = Vector2.from_xy(2, 3)
@@ -166,3 +178,15 @@ def test_arc_bounding_box_degenerate():
 
     assert box.pos == Vector2.from_xy(1, 2)
     assert box.size == Vector2.from_xy(2, 2)
+
+def test_circle_bounding_box():
+    proto = base_types_pb2.GraphicShape()
+    proto.circle.center.x_nm = 10
+    proto.circle.center.y_nm = 20
+    proto.circle.radius_point.x_nm = 13
+    proto.circle.radius_point.y_nm = 24
+
+    box = Circle(proto).bounding_box()
+
+    assert box.pos == Vector2.from_xy(5, 15)
+    assert box.size == Vector2.from_xy(10, 10)

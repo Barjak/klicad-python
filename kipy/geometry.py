@@ -793,6 +793,9 @@ def arc_bounding_box(start: Vector2, mid: Vector2, end: Vector2) -> Box2:
     """Calculates a bounding box for an arc
 
     .. versionadded:: 0.7.0"""
+    def ccw_delta(start_angle: float, end_angle: float) -> float:
+        return (end_angle - start_angle) % (2 * math.pi)
+
     center = arc_center(start, mid, end)
     if center is None:
         return Box2.from_points([start, mid, end])
@@ -802,6 +805,7 @@ def arc_bounding_box(start: Vector2, mid: Vector2, end: Vector2) -> Box2:
         return Box2.from_points([start, mid, end])
 
     start_angle = arc_start_angle(start, mid, end)
+    mid_angle = normalize_angle_radians((mid - center).angle())
     end_angle = arc_end_angle(start, mid, end)
     assert start_angle is not None
     assert end_angle is not None
@@ -809,30 +813,31 @@ def arc_bounding_box(start: Vector2, mid: Vector2, end: Vector2) -> Box2:
     radius_int = int(radius + 0.5)
     box = Box2.from_points([start, end])
 
-    if end_angle > start_angle:
-        if start_angle < 0.0 and end_angle > 0.0:
-            box.merge(Vector2.from_xy(center.x + radius_int, center.y))
+    if start == end and mid != start:
+        box.merge(Vector2.from_xy(center.x + radius_int, center.y))
+        box.merge(Vector2.from_xy(center.x, center.y + radius_int))
+        box.merge(Vector2.from_xy(center.x - radius_int, center.y))
+        box.merge(Vector2.from_xy(center.x, center.y - radius_int))
+        return box
 
-        if start_angle < (math.pi * 0.5) and end_angle > (math.pi * 0.5):
-            box.merge(Vector2.from_xy(center.x, center.y + radius_int))
+    ccw_to_mid = ccw_delta(start_angle, mid_angle)
+    ccw_to_end = ccw_delta(start_angle, end_angle)
+    ccw = ccw_to_mid <= ccw_to_end
 
-        if start_angle < math.pi and end_angle > math.pi:
-            box.merge(Vector2.from_xy(center.x - radius_int, center.y))
+    def angle_on_arc(theta: float) -> bool:
+        if ccw:
+            return ccw_delta(start_angle, theta) <= ccw_to_end
 
-        if start_angle < (math.pi * 1.5) and end_angle > (math.pi * 1.5):
-            box.merge(Vector2.from_xy(center.x, center.y - radius_int))
-    else:
-        if start_angle < 0.0 or end_angle > 0.0:
-            box.merge(Vector2.from_xy(center.x + radius_int, center.y))
+        return ccw_delta(theta, start_angle) <= ccw_delta(end_angle, start_angle)
 
-        if start_angle < (math.pi * 0.5) or end_angle > (math.pi * 0.5):
-            box.merge(Vector2.from_xy(center.x, center.y + radius_int))
-
-        if start_angle < math.pi or end_angle > math.pi:
-            box.merge(Vector2.from_xy(center.x - radius_int, center.y))
-
-        if start_angle < (math.pi * 1.5) or end_angle > (math.pi * 1.5):
-            box.merge(Vector2.from_xy(center.x, center.y - radius_int))
+    for theta, point in (
+        (0.0, Vector2.from_xy(center.x + radius_int, center.y)),
+        (math.pi * 0.5, Vector2.from_xy(center.x, center.y + radius_int)),
+        (math.pi, Vector2.from_xy(center.x - radius_int, center.y)),
+        (math.pi * 1.5, Vector2.from_xy(center.x, center.y - radius_int)),
+    ):
+        if angle_on_arc(theta):
+            box.merge(point)
 
     return box
 

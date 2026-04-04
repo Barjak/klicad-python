@@ -652,9 +652,14 @@ class Circle(GraphicShape):
 
     def bounding_box(self) -> Box2:
         """Calculates the bounding box of the circle"""
-        box = Box2.from_pos_size(self.center, Vector2.from_xy(0, 0))
-        box.inflate(int(self.radius() + 0.5))
-        return box
+        radius = int(self.radius() + 0.5)
+        diameter = radius * 2
+        return Box2.from_xywh(
+            self.center.x - radius,
+            self.center.y - radius,
+            diameter,
+            diameter,
+        )
 
 
 class Rectangle(GraphicShape):
