@@ -256,7 +256,9 @@ class KiCad:
         :param action: the name of a KiCad TOOL_ACTION
         :return: a value from the KIAPI.COMMON.COMMANDS.RUN_ACTION_STATUS enum
         """
-        return self._client.send(commands.RunAction(), commands.RunActionResponse)
+        command = commands.RunAction()
+        command.action = action
+        return self._client.send(command, commands.RunActionResponse)
 
     def get_open_documents(self, doc_type: DocumentType.ValueType) -> Sequence[DocumentSpecifier]:
         """Retrieves a list of open documents matching the given type"""
