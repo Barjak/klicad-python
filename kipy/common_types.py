@@ -69,6 +69,9 @@ class SheetPath(Wrapper):
         if proto is not None:
             self._proto.CopyFrom(proto)
 
+    def __repr__(self) -> str:
+        return '/' + '/'.join([id.value for id in self.path])
+
     @property
     def path(self) -> list[KIID]:
         return list(self._proto.path)

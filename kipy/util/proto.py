@@ -23,6 +23,7 @@ from google.protobuf.message import Message, DecodeError
 
 from kipy.proto.board import board_types_pb2
 from kipy.proto.common.types import base_types_pb2
+from kipy.proto.schematic import schematic_types_pb2
 
 def pack_any(object: Message) -> Any:
     a = Any()
@@ -46,7 +47,25 @@ _any_urls = {
     "type.googleapis.com/kiapi.board.types.Group": board_types_pb2.Group,
     "type.googleapis.com/kiapi.board.types.Field": board_types_pb2.Field,
     "type.googleapis.com/kiapi.board.types.FootprintInstance": board_types_pb2.FootprintInstance,
-    "type.googleapis.com/kiapi.board.types.Footprint3DModel": board_types_pb2.Footprint3DModel
+    "type.googleapis.com/kiapi.board.types.Footprint3DModel": board_types_pb2.Footprint3DModel,
+
+    "type.googleapis.com/kiapi.schematic.types.SchematicField": schematic_types_pb2.SchematicField,
+    "type.googleapis.com/kiapi.schematic.types.SchematicLine": schematic_types_pb2.SchematicLine,
+    "type.googleapis.com/kiapi.schematic.types.Junction": schematic_types_pb2.Junction,
+    "type.googleapis.com/kiapi.schematic.types.NoConnectMarker": schematic_types_pb2.NoConnectMarker,
+    "type.googleapis.com/kiapi.schematic.types.BusEntry": schematic_types_pb2.BusEntry,
+    "type.googleapis.com/kiapi.schematic.types.SchematicText": schematic_types_pb2.SchematicText,
+    "type.googleapis.com/kiapi.schematic.types.SchematicTextBox": schematic_types_pb2.SchematicTextBox,
+    "type.googleapis.com/kiapi.schematic.types.SchematicGraphicShape": schematic_types_pb2.SchematicGraphicShape,
+    "type.googleapis.com/kiapi.schematic.types.SchematicImage": schematic_types_pb2.SchematicImage,
+    "type.googleapis.com/kiapi.schematic.types.LocalLabel": schematic_types_pb2.LocalLabel,
+    "type.googleapis.com/kiapi.schematic.types.GlobalLabel": schematic_types_pb2.GlobalLabel,
+    "type.googleapis.com/kiapi.schematic.types.HierarchicalLabel": schematic_types_pb2.HierarchicalLabel,
+    "type.googleapis.com/kiapi.schematic.types.DirectiveLabel": schematic_types_pb2.DirectiveLabel,
+    "type.googleapis.com/kiapi.schematic.types.Group": schematic_types_pb2.Group,
+    "type.googleapis.com/kiapi.schematic.types.SheetPin": schematic_types_pb2.SheetPin,
+    "type.googleapis.com/kiapi.schematic.types.SheetSymbol": schematic_types_pb2.SheetSymbol,
+    "type.googleapis.com/kiapi.schematic.types.SchematicSymbolInstance": schematic_types_pb2.SchematicSymbolInstance,
 }
 
 def unpack_any(object: Any) -> Message:

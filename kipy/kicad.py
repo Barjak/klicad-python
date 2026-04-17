@@ -34,6 +34,7 @@ from kipy.common_types import Text, TextBox, CompoundShape
 from kipy.errors import FutureVersionError
 from kipy.geometry import Box2
 from kipy.project import Project
+from kipy.schematic import Schematic
 from kipy.server import KiCadServer, find_kicad_cli
 from kipy.proto.common import commands
 from kipy.proto.common.types import base_types_pb2, DocumentType, DocumentSpecifier
@@ -297,6 +298,15 @@ class KiCad:
         if len(docs) == 0:
             raise ApiError("Expected to be able to retrieve at least one board")
         return Board(self._client, docs[0])
+
+    def get_schematic(self) -> Schematic:
+        """
+        .. versionadded:: 0.x.y (KiCad 11)
+        """
+        docs = self.get_open_documents(DocumentType.DOCTYPE_SCHEMATIC)
+        if len(docs) == 0:
+            raise ApiError("Expected to be able to retrieve at least one schematic")
+        return Schematic(self._client, docs[0])
 
     # Utility functions
 
