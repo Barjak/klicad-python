@@ -3,10 +3,8 @@
 `kicad-python` is the official Python bindings for the [KiCad](https://kicad.org) IPC API.  This
 library makes it possible to develop scripts and tools that interact with a running KiCad session.
 
-The KiCad IPC API is available in KiCad 9 or newer, and must be enabled in KiCad preferences before
-API commands will work. The legacy SWIG-based Python bindings for KiCad's PCB editor still exist,
-but are in maintenance mode and will not be expanded.  The SWIG bindings will be removed in a
-future version of KiCad (currently planned for KiCad 11 in 2027).
+The KiCad IPC API replaces the legacy SWIG-based Python bindings for KiCad's PCB editor.
+The SWIG bindings still exist in KiCad 9 and 10, but are removed in KiCad 11.
 
 For more information about the IPC API, please see the
 [KiCad developer documentation](https://dev-docs.kicad.org/en/apis-and-binding/ipc-api/index.html).
@@ -88,15 +86,26 @@ plugins, copy or symlink them into the appropriate plugins path in order for KiC
 
 ## Release History
 
-### 0.7.0 (TBD)
+### 0.x.y (TBD)
+
+- Add support for launching `kicad-cli api-server` (headless mode) automatically
+- Add board output jobs support
+- Add footprint wizards support
+- Add initial schematic support (`KiCad.get_schematic`, `schematic_types`, etc)
+
+### 0.7.1 (April 17, 2026)
+
+- Fix `KiCad.run_action` (leommxj)
+
+### 0.7.0 (April 17, 2026)
 
 - Add `Board.get_items_by_id` and groups support via `Board.get_groups` (requires KiCad 10) (Anthonypark, !15)
 - Add support for barcodes and `Board.get_barcodes` (requires KiCad 10.0.1)
 - Add support for reference images and `Board.get_reference_images` (requires KiCad 10.0.1)
 - Add `Board.set_title_block_info` (requires KiCad 10.0.1)
 - Add `Board.get_connected_items`, `Board.get_items_by_net`, and `Board.get_items_by_netclass` (requires KiCad 10.0.1)
-- Add `Board.get_design_rules` / `Board.get_custom_design_rules` and setters (requires KiCad 11)
-- Add `packaging` module; can run `python3 -m kipy.packaging validate <path>` to check packages/plugin directories
+- Fix several bounding box calculation bugs
+- Support building with older versions of protoc
 
 ### 0.6.0 (March 15, 2026)
 
