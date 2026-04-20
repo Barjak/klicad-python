@@ -23,7 +23,7 @@ from typing import Iterable, List, Sequence, Union, cast
 from google.protobuf.empty_pb2 import Empty
 
 from kipy.client import KiCadClient
-from kipy.common_types import Commit, TitleBlockInfo
+from kipy.common_types import Commit, PageSettings, TitleBlockInfo
 from kipy.project import Project
 from kipy.schematic_types import (
     Group,
@@ -53,6 +53,8 @@ from kipy.proto.common.commands.editor_commands_pb2 import (
     GetItems,
     GetItemsById,
     GetItemsResponse,
+    GetPageSettings,
+    SetPageSettings,
     UpdateItems,
     UpdateItemsResponse,
 )
@@ -311,6 +313,17 @@ class Schematic:
         command.document.CopyFrom(self._doc)
         command.title_block.CopyFrom(title_block.proto)
         self._kicad.send(command, Empty)
+
+    def get_page_settings(self) -> PageSettings:
+        command = GetPageSettings()
+        command.document.CopyFrom(self._doc)
+        return PageSettings(self._kicad.send(command, base_types_pb2.PageSettings))
+
+    def set_page_settings(self, page_settings: PageSettings) -> PageSettings:
+        command = SetPageSettings()
+        command.document.CopyFrom(self._doc)
+        command.page_settings.CopyFrom(page_settings.proto)
+        return PageSettings(self._kicad.send(command, base_types_pb2.PageSettings))
 
     def get_as_string(self) -> str:
         command = editor_commands_pb2.SaveDocumentToString()

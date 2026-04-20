@@ -42,10 +42,16 @@ from kipy.proto.common.types.enums_pb2 import (  # noqa
     VerticalAlignment,
 )
 
+from kipy.proto.common.types.base_types_pb2 import (  # noqa
+    PageSize,
+    PageOrientation,
+)
+
 if sys.version_info >= (3, 13):
     from warnings import deprecated
 else:
     from typing_extensions import deprecated
+
 
 class Commit:
     def __init__(self, id: KIID):
@@ -70,7 +76,7 @@ class SheetPath(Wrapper):
             self._proto.CopyFrom(proto)
 
     def __repr__(self) -> str:
-        return '/' + '/'.join([id.value for id in self.path])
+        return "/" + "/".join([id.value for id in self.path])
 
     @property
     def path(self) -> list[KIID]:
@@ -87,6 +93,7 @@ class SheetPath(Wrapper):
         (for example, is not present in contexts where the SheetPath is sourced from a board
         object)"""
         return self._proto.path_human_readable
+
 
 class Color(Wrapper):
     def __init__(
@@ -152,7 +159,9 @@ class TextAttributes(Wrapper):
         )
 
     @property
-    @deprecated("This property will always return True in KiCad 9, and will be removed in KiCad 10")
+    @deprecated(
+        "This property will always return True in KiCad 9, and will be removed in KiCad 10"
+    )
     def visible(self) -> bool:
         """
         .. deprecated:: 0.3.0 removed in KiCad 9.0.1
@@ -514,9 +523,14 @@ class GraphicShape(Wrapper):
 class Segment(GraphicShape):
     """Represents a base graphic segment (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -547,9 +561,14 @@ class Segment(GraphicShape):
 class Arc(GraphicShape):
     """Represents a generic graphical arc (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -624,9 +643,14 @@ class Arc(GraphicShape):
 class Circle(GraphicShape):
     """Represents a graphic circle (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -668,9 +692,14 @@ class Circle(GraphicShape):
 class Rectangle(GraphicShape):
     """Represents a graphic rectangle (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -701,9 +730,14 @@ class Rectangle(GraphicShape):
 class Polygon(GraphicShape):
     """Represents a graphic polygon (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -714,10 +748,10 @@ class Polygon(GraphicShape):
         ]
 
     def _pack(self):
-        self._graphic_proto.polygon.ClearField('polygons')
-        self._graphic_proto.polygon.polygons.extend([
-            polygon.proto for polygon in self._polygons
-        ])
+        self._graphic_proto.polygon.ClearField("polygons")
+        self._graphic_proto.polygon.polygons.extend(
+            [polygon.proto for polygon in self._polygons]
+        )
 
     @property
     def polygons(self) -> list[PolygonWithHoles]:
@@ -737,9 +771,14 @@ class Polygon(GraphicShape):
 class Bezier(GraphicShape):
     """Represents a graphic bezier curve (not a board or schematic item)"""
 
-    def __init__(self, proto: Optional[base_types_pb2.GraphicShape] = None,
-                 proto_ref: Optional[base_types_pb2.GraphicShape] = None):
-        self._graphic_proto = proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.GraphicShape] = None,
+        proto_ref: Optional[base_types_pb2.GraphicShape] = None,
+    ):
+        self._graphic_proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.GraphicShape()
+        )
 
         if proto is not None:
             self._graphic_proto.CopyFrom(proto)
@@ -915,3 +954,49 @@ class TitleBlockInfo(Wrapper):
             self._proto.comment8 = comments[8]
         if 9 in comments:
             self._proto.comment9 = comments[9]
+
+
+class PageSettings(Wrapper):
+    def __init__(
+        self,
+        proto: Optional[base_types_pb2.PageSettings] = None,
+        proto_ref: Optional[base_types_pb2.PageSettings] = None,
+    ):
+        self._proto = (
+            proto_ref if proto_ref is not None else base_types_pb2.PageSettings()
+        )
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    @property
+    def page_size(self) -> base_types_pb2.PageSize.ValueType:
+        return self._proto.page_size
+
+    @page_size.setter
+    def page_size(self, value: base_types_pb2.PageSize.ValueType):
+        self._proto.page_size = value
+
+    @property
+    def user_page_size(self) -> Vector2:
+        return Vector2(self._proto.user_page_size)
+
+    @user_page_size.setter
+    def user_page_size(self, value: Vector2):
+        self._proto.user_page_size.CopyFrom(value.proto)
+
+    @property
+    def orientation(self) -> base_types_pb2.PageOrientation.ValueType:
+        return self._proto.orientation
+
+    @orientation.setter
+    def orientation(self, value: base_types_pb2.PageOrientation.ValueType):
+        self._proto.orientation = value
+
+    @property
+    def drawing_sheet(self) -> str:
+        return self._proto.drawing_sheet
+
+    @drawing_sheet.setter
+    def drawing_sheet(self, value: str):
+        self._proto.drawing_sheet = value
