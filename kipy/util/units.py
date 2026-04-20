@@ -32,3 +32,18 @@ def to_mm(value_nm: int) -> float:
     Converts a KiCad API length/distance value (in nanometers) to millimeters
     """
     return float(value_nm) / 1_000_000
+
+def from_mils(value_mils: float) -> int:
+    """
+    KiCad uses several internal unit systems, but for the IPC API, all distance units are defined
+    as 64-bit nanometers
+    :param value_mils: a quantity in mils (thousanths of an inch)
+    :return: the quantity in KiCad API units
+    """
+    return int(value_mils * 25_400)
+
+def to_mils(value_mils: int) -> float:
+    """
+    Converts a KiCad API length/distance value (in nanometers) to mils (thousanths of an inch)
+    """
+    return float(value_mils) / 25_400

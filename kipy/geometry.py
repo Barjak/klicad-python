@@ -25,6 +25,7 @@ from typing import Optional, Union
 import math
 from kipy.proto.common import types
 from kipy.util import from_mm
+from kipy.util.units import from_mils
 from kipy.wrapper import Wrapper
 
 if sys.version_info >= (3, 11):
@@ -60,6 +61,16 @@ class Vector2(Wrapper):
         proto = types.Vector2()
         proto.x_nm = from_mm(x_mm)
         proto.y_nm = from_mm(y_mm)
+        return cls(proto)
+
+    @classmethod
+    def from_xy_mils(cls, x_mils: float, y_mils: float) -> Self:
+        """Initialize Vector2 with x and y values in mils
+
+        .. versionadded:: 0.x.y"""
+        proto = types.Vector2()
+        proto.x_nm = from_mils(x_mils)
+        proto.y_nm = from_mils(y_mils)
         return cls(proto)
 
     @property
