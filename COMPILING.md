@@ -22,12 +22,11 @@ Next install protobuf-compiler
 then, install `poetry` and use it to install the required Python dependencies
 (you may need to use `python` instead of `python3` on some platforms)
 
-Option 1: install `poetry` globally and then use `poetry shell` to create a virtual Python
+Option 1: install `poetry` globally and then use `poetry run` to create a virtual Python
 environment for `kicad-python` development:
 
 ```sh
-$ sudo apt install python3-poetry # Or whatever other way you want to install Poetry
-$ poetry env activate
+$ uv tool install poetry # Or whatever other way you want to install Poetry
 $ poetry install
 ```
 
@@ -44,9 +43,8 @@ $ poetry install
 Then, to build the library and install it into the local environment:
 
 ```sh
-$ poetry env activate   # If you didn't run `poetry shell` earlier
 $ poetry build
-$ pip install -e .
+$ poetry run pip install -e .
 ```
 
 # Running examples
@@ -54,10 +52,8 @@ $ pip install -e .
 With KiCad running and the API server enabled in Preferences > Plugins, you should be able to run:
 
 ```sh
-$ python3 examples/hello.py
+$ poetry run python examples/hello.py
 ```
-
-NOTE: On some platforms, including Windows, you should use `python` instead of `python3`.
 
 This will work if you have a KiCad instance running, with the API server enabled,
 and the server is listening at the default location (which will be the case if there
