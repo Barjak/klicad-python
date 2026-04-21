@@ -1824,6 +1824,76 @@ class Footprint3DModel(Wrapper):
     def opacity(self, opacity: float):
         self._proto.opacity = opacity
 
+
+class FootprintDesignRuleOverrides(Wrapper):
+    """Footprint design rule overrides: all values are optional; if absent, the rules from the
+    board will be used.
+
+    .. versionadded:: 0.8.0
+    """
+
+    def __init__(
+        self,
+        proto: Optional[board_types_pb2.FootprintDesignRuleOverrides] = None,
+        proto_ref: Optional[board_types_pb2.FootprintDesignRuleOverrides] = None,
+    ):
+        self._proto = (
+            proto_ref
+            if proto_ref is not None
+            else board_types_pb2.FootprintDesignRuleOverrides()
+        )
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    @property
+    def solder_mask(self) -> Optional[SolderMaskOverrides]:
+        if self._proto.HasField("solder_mask"):
+            return SolderMaskOverrides(proto_ref=self._proto.solder_mask)
+        return None
+
+    @solder_mask.setter
+    def solder_mask(self, value: Optional[SolderMaskOverrides]):
+        if value is not None:
+            self._proto.solder_mask.CopyFrom(value.proto)
+        else:
+            self._proto.ClearField("solder_mask")
+
+    @property
+    def solder_paste(self) -> Optional[SolderPasteOverrides]:
+        if self._proto.HasField("solder_paste"):
+            return SolderPasteOverrides(proto_ref=self._proto.solder_paste)
+        return None
+
+    @solder_paste.setter
+    def solder_paste(self, value: Optional[SolderPasteOverrides]):
+        if value is not None:
+            self._proto.solder_paste.CopyFrom(value.proto)
+        else:
+            self._proto.ClearField("solder_paste")
+
+    @property
+    def copper_clearance(self) -> Optional[int]:
+        if self._proto.HasField("copper_clearance"):
+            return self._proto.copper_clearance.value_nm
+        return None
+
+    @copper_clearance.setter
+    def copper_clearance(self, clearance_nm: Optional[int]):
+        if clearance_nm is not None:
+            self._proto.copper_clearance.value_nm = clearance_nm
+        else:
+            self._proto.ClearField("copper_clearance")
+
+    @property
+    def zone_connection(self) -> ZoneConnectionStyle.ValueType:
+        return self._proto.zone_connection
+
+    @zone_connection.setter
+    def zone_connection(self, value: ZoneConnectionStyle.ValueType):
+        self._proto.zone_connection = value
+
+
 class Footprint(Wrapper):
     """Represents the definition of a footprint (existing in a footprint library or on a board),
     which contains the child objects of the footprint (pads, text, etc).  Footprint definitions are
@@ -2068,6 +2138,18 @@ class FootprintInstance(BoardItem):
     @property
     def attributes(self) -> FootprintAttributes:
         return FootprintAttributes(proto_ref=self._proto.attributes)
+
+    @property
+    def overrides(self) -> FootprintDesignRuleOverrides:
+        """Returns the design rule overrides for the footprint
+
+        .. versionadded:: 0.8.0
+        """
+        return FootprintDesignRuleOverrides(proto_ref=self._proto.overrides)
+
+    @overrides.setter
+    def overrides(self, value: FootprintDesignRuleOverrides):
+        self._proto.overrides.CopyFrom(value.proto)
 
     @property
     def texts_and_fields(self) -> Sequence[Union[BoardText, BoardTextBox, Field]]:
