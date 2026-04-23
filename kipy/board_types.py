@@ -1194,20 +1194,30 @@ class SolderPasteOverrides(Wrapper):
             self._proto.CopyFrom(proto)
 
     @property
-    def solder_paste_margin(self) -> int:
-        return self._proto.solder_paste_margin.value_nm
+    def solder_paste_margin(self) -> Optional[int]:
+        if self._proto.HasField("solder_paste_margin"):
+            return self._proto.solder_paste_margin.value_nm
+        return None
 
     @solder_paste_margin.setter
-    def solder_paste_margin(self, margin_nm: int):
-        self._proto.solder_paste_margin.value_nm = margin_nm
+    def solder_paste_margin(self, margin_nm: Optional[int]):
+        if margin_nm is None:
+            self._proto.ClearField("solder_paste_margin")
+        else:
+            self._proto.solder_paste_margin.value_nm = margin_nm
 
     @property
-    def solder_paste_margin_ratio(self) -> float:
-        return self._proto.solder_paste_margin_ratio.value
+    def solder_paste_margin_ratio(self) -> Optional[float]:
+        if self._proto.HasField("solder_paste_margin_ratio"):
+            return self._proto.solder_paste_margin_ratio.value
+        return None
 
     @solder_paste_margin_ratio.setter
-    def solder_paste_margin_ratio(self, ratio: float):
-        self._proto.solder_paste_margin_ratio.value = ratio
+    def solder_paste_margin_ratio(self, ratio: Optional[float]):
+        if ratio is None:
+            self._proto.ClearField("solder_paste_margin_ratio")
+        else:
+            self._proto.solder_paste_margin_ratio.value = ratio
 
 
 class PadStackLayer(Wrapper):
