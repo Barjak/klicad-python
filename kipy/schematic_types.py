@@ -1696,11 +1696,11 @@ class SheetInstance(Wrapper):
     def __repr__(self) -> str:
 
         def repr_child(c: SheetInstance, d: int):
-            r = f"{'  '*d}SheetInstance([{c.page_number}] {c.name} ({c.filename}))"
+            r = f"{'  ' * d}SheetInstance([{c.page_number}] {c.name} ({c.filename}))"
 
             if len(c.children) > 0:
-                r += '\n'
-                r += '\n'.join([repr_child(child, d + 1) for child in c.children])
+                r += "\n"
+                r += "\n".join([repr_child(child, d + 1) for child in c.children])
 
             return r
 
@@ -1728,6 +1728,80 @@ class SheetInstance(Wrapper):
     @property
     def children(self) -> Sequence["SheetInstance"]:
         return [SheetInstance(proto_ref=child) for child in self._proto.children]
+
+
+class SchematicNetSheetContents(Wrapper):
+    """
+    Data returned from GetSchematicNetlist (read-only)
+
+    .. versionadded:: 0.x.y (KiCad 11)
+    """
+
+    def __init__(
+        self,
+        proto: Optional[schematic_types_pb2.SchematicNetSheetContents] = None,
+        proto_ref: Optional[schematic_types_pb2.SchematicNetSheetContents] = None,
+    ):
+        self._proto = (
+            proto_ref
+            if proto_ref is not None
+            else schematic_types_pb2.SchematicNetSheetContents()
+        )
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    def __repr__(self) -> str:
+        return f"SchematicNetSheetContents({self.path}, {len(self.items)} items)"
+
+    @property
+    def path(self) -> SheetPath:
+        return SheetPath(proto_ref=self._proto.path)
+
+    @property
+    def items(self) -> list[KIID]:
+        return list(self._proto.items)
+
+
+class SchematicNet(Wrapper):
+    """
+    Data returned from e.g. GetSchematicNetlist (read-only)
+
+    .. versionadded:: 0.x.y (KiCad 11)
+    """
+
+    def __init__(
+        self,
+        proto: Optional[schematic_types_pb2.SchematicNet] = None,
+        proto_ref: Optional[schematic_types_pb2.SchematicNet] = None,
+    ):
+        self._proto = (
+            proto_ref if proto_ref is not None else schematic_types_pb2.SchematicNet()
+        )
+
+        if proto is not None:
+            self._proto.CopyFrom(proto)
+
+    def __repr__(self) -> str:
+
+        def repr_sheet(s: SchematicNetSheetContents, d: int):
+            return f"{'  ' * d}{s.path} ({len(s.items)} items)"
+
+        r = f"SchematicNet({self.name})"
+
+        if len(self.sheets) > 0:
+            r += "\n"
+            r += "\n".join([repr_sheet(sheet, 1) for sheet in self.sheets])
+
+        return r
+
+    @property
+    def name(self) -> str:
+        return self._proto.name
+
+    @property
+    def sheets(self) -> Sequence[SchematicNetSheetContents]:
+        return [SchematicNetSheetContents(proto_ref=s) for s in self._proto.sheets]
 
 
 _proto_to_object: Dict[type[Message], type[Wrapper]] = {

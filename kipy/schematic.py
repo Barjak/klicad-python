@@ -32,6 +32,7 @@ from kipy.schematic_types import (
     SchematicImage,
     SchematicItem,
     SchematicLine,
+    SchematicNet,
     SchematicSymbolInstance,
     SchematicText,
     SchematicTextBox,
@@ -66,7 +67,9 @@ from kipy.proto.common.types import (
 )
 from kipy.proto.schematic.schematic_commands_pb2 import (
     GetSchematicHierarchy,
+    GetSchematicNetlist,
     SchematicHierarchyResponse,
+    SchematicNetlistResponse,
 )
 from kipy.util import pack_any
 from kipy.wrapper import Wrapper
@@ -302,6 +305,24 @@ class Schematic:
         command.document.CopyFrom(self._doc)
         response = self._kicad.send(command, SchematicHierarchyResponse)
         return [SheetInstance(proto=sheet) for sheet in response.top_level_sheets]
+
+    def get_netlist(
+        self,
+        types: Union[
+            KiCadObjectType.ValueType, Sequence[KiCadObjectType.ValueType], None
+        ] = None,
+    ) -> list[SchematicNet]:
+        command = GetSchematicNetlist()
+        command.document.CopyFrom(self._doc)
+
+        if types is not None:
+            if isinstance(types, int):
+                command.types.append(types)
+            else:
+                command.types.extend(types)
+
+        response = self._kicad.send(command, SchematicNetlistResponse)
+        return [SchematicNet(proto=net) for net in response.nets]
 
     def get_title_block(self) -> TitleBlockInfo:
         command = editor_commands_pb2.GetTitleBlockInfo()
