@@ -301,12 +301,93 @@ def test_jobset_load_demo_if_present(kicad):
     assert_kicad_alive(kicad)
 
 
+
 # ---- Gerber-diff (smoke only; full diff needs two .gbr files) ----
 
 def test_gerber_diff_module(kicad):
     """gerber-diff binding loads without instantiating a diff."""
     r = kicad.run_python(
         "import kicad_native_gerber_diff as gd; hasattr(gd, 'run')"
+    )
+    assert_run_python_ok(r)
+    assert r.result_repr == "True"
+    assert_kicad_alive(kicad)
+
+
+# ---- batch 5: gerber_info / gerber_export_png / pcb_import ----
+
+def test_gerber_info_on_exported_gerber(kicad, tmp_path):
+    """gerber_info parses one of the gerbers we just exported from the switch
+    board and returns a structured report dict."""
+    # First export gerbers from switch board so we have files to inspect
+    gerber_dir = tmp_path / "gerbers"
+    gerber_dir.mkdir()
+    r = kicad.run_python(
+        "import kicad_native_export_gerbers as g\n"
+        f"g.run({str(SWITCH_PCB)!r}, output_dir={str(gerber_dir) + '/'!r})"
+    )
+    assert_run_python_ok(r)
+    # Pick the F.Cu gerber
+    f_cu = next((p for p in gerber_dir.iterdir() if "F_Cu" in p.name), None)
+    assert f_cu is not None, f"no F_Cu gerber in {list(gerber_dir.iterdir())}"
+
+    r = kicad.run_python(
+        "import kicad_native_gerber_info as gi\n"
+        f"gi.run({str(f_cu)!r}, output_format='json', units='mm', calculate_area=True)"
+    )
+    assert_run_python_ok(r)
+    assert "'ok': True" in r.result_repr, r.result_repr
+    assert "'report':" in r.result_repr, r.result_repr
+    assert_kicad_alive(kicad)
+
+
+def test_gerber_export_png(kicad, tmp_path):
+    """gerber_export_png rasterizes a gerber to PNG.
+
+    The switch board is sparse — many of its per-layer gerbers contain
+    "no draw items".  We pick the largest gerber in the export, which is
+    the most likely to have content.  If even that is empty, accept the
+    upstream "no draw items" error as proof the binding dispatched; the
+    test still fails only if KiCad crashes.
+    """
+    gerber_dir = tmp_path / "gerbers"
+    gerber_dir.mkdir()
+    r = kicad.run_python(
+        "import kicad_native_export_gerbers as g\n"
+        f"g.run({str(SWITCH_PCB)!r}, output_dir={str(gerber_dir) + '/'!r})"
+    )
+    assert_run_python_ok(r)
+
+    gerbers = sorted(
+        (p for p in gerber_dir.iterdir() if p.is_file() and p.suffix not in (".gbrjob",)),
+        key=lambda p: p.stat().st_size,
+        reverse=True,
+    )
+    assert gerbers, f"no gerbers produced in {gerber_dir}"
+    largest = gerbers[0]
+
+    out_dir = tmp_path / "pngs"
+    out_dir.mkdir()
+    r = kicad.run_python(
+        "import kicad_native_gerber_export_png as gp\n"
+        f"gp.run(gerber_paths=[{str(largest)!r}], output_dir={str(out_dir) + '/'!r}, dpi=150)"
+    )
+    assert_run_python_ok(r)  # the binding itself didn't crash / raise
+
+    # Either the rasterization succeeded with a PNG, OR upstream complained
+    # the gerber has no content — both prove the binding dispatched cleanly.
+    pngs = [p for p in out_dir.iterdir() if p.suffix == ".png"]
+    no_content = "no draw items" in r.result_repr
+    assert pngs or no_content, (
+        f"no PNGs in {out_dir} and no 'no draw items' explanation: {r.result_repr}"
+    )
+    assert_kicad_alive(kicad)
+
+
+def test_pcb_import_module(kicad):
+    """pcb_import binding loads and exposes run()."""
+    r = kicad.run_python(
+        "import kicad_native_pcb_import as pi; hasattr(pi, 'run')"
     )
     assert_run_python_ok(r)
     assert r.result_repr == "True"
