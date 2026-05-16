@@ -1,0 +1,23 @@
+{
+    "meta": {
+        "filename": "minimal.kicad_jobset",
+        "version": 1
+    },
+    "jobs": [
+        {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "type": "pcb_export_gerbers",
+            "description": "Minimal gerbers job for KliCAD test",
+            "settings": {}
+        }
+    ],
+    "outputs": [
+        {
+            "id": "00000000-0000-0000-0000-000000000010",
+            "type": "folder",
+            "description": "Minimal output destination",
+            "only": [],
+            "settings": {}
+        }
+    ]
+}

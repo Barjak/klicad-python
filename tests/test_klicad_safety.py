@@ -33,6 +33,7 @@ ALL_BINDING_MODULES = [
     "kicad_native_gerber_diff",
     "kicad_native_gerber_export_png",
     "kicad_native_gerber_info",
+    "kicad_native_gui",
     "kicad_native_jobset",
     "kicad_native_pcb_import",
     "kicad_native_pcb_upgrade",
