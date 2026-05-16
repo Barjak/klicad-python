@@ -34,8 +34,11 @@ ALL_BINDING_MODULES = [
     "kicad_native_gerber_export_png",
     "kicad_native_gerber_info",
     "kicad_native_gui",
+    "kicad_native_io_discovery",
     "kicad_native_jobset",
+    "kicad_native_kiway_events",
     "kicad_native_library_tables",
+    "kicad_native_pcb_calculator",
     "kicad_native_project_manager",
     "kicad_native_pcb_import",
     "kicad_native_pcb_upgrade",
@@ -54,7 +57,10 @@ KIFACE_RESIDENT_MODULES = [
     ("kicad_native_symbol_editor",    "symbol_editor"),
     ("kicad_native_simulator",        "simulator"),
     ("kicad_native_pcb_state",        "pcb_editor"),
+    ("kicad_native_pcb_actions",      "pcb_editor"),
     ("kicad_native_footprint_editor", "footprint_editor"),
+    ("kicad_native_gerbview",         "gerbview"),
+    ("kicad_native_pagelayout",       "page_layout"),
 ]
 
 
