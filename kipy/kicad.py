@@ -24,8 +24,27 @@ import os
 import platform
 import random
 import string
+from dataclasses import dataclass
 from tempfile import gettempdir
 from typing import Optional, Sequence, Union
+
+
+@dataclass
+class RunPythonResult:
+    """Structured return value of KiCad.run_python (local fork addition).
+
+    Mirrors the RunPythonResponse protobuf. ``ok`` is True iff the embedded
+    interpreter ran the code without an uncaught exception; on False, see
+    ``exception_traceback`` for the trace.
+    """
+    ok: bool
+    stdout: str
+    stderr: str
+    result_repr: str
+    exception_traceback: str
+
+    def __bool__(self) -> bool:
+        return self.ok
 from google.protobuf.empty_pb2 import Empty
 
 from kipy.board import Board
@@ -223,6 +242,27 @@ class KiCad:
 
     def ping(self):
         self._client.send(commands.Ping(), Empty)
+
+    def run_python(self, code: str) -> "RunPythonResult":
+        """Run Python source in KiCad's embedded interpreter (local fork).
+
+        The interpreter is always-on, lives in the KiCad process, and exposes
+        the kicad_native pybind11 module that wraps KiCad's C++ surface.
+        State (variables in __main__) persists across calls.
+
+        If the code ends in an expression, its repr() is returned in
+        ``result_repr``; otherwise that field is empty.
+        """
+        req = base_commands_pb2.RunPython()
+        req.code = code
+        resp = self._client.send(req, base_commands_pb2.RunPythonResponse)
+        return RunPythonResult(
+            ok=resp.ok,
+            stdout=resp.stdout,
+            stderr=resp.stderr,
+            result_repr=resp.result_repr,
+            exception_traceback=resp.exception_traceback,
+        )
 
     def get_kicad_binary_path(self, binary_name: str) -> str:
         """Returns the full path to the given KiCad binary
