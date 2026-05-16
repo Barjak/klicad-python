@@ -39,8 +39,16 @@ ALL_BINDING_MODULES = [
     "kicad_native_pcb_upgrade",
     "kicad_native_render",
     "kicad_native_sch_upgrade",
+    "kicad_native_settings",
     "kicad_native_sym_export_svg",
     "kicad_native_sym_upgrade",
+]
+
+# Kiface-resident modules (Pattern B in BINDING_PATTERN.md).  These only
+# become importable after the relevant editor kiface has been loaded.
+KIFACE_RESIDENT_MODULES = [
+    ("kicad_native_sch_actions",     "schematic"),
+    ("kicad_native_schematic_state", "schematic"),
 ]
 
 
@@ -143,3 +151,36 @@ def test_binding_has_callable(kicad, module_name):
     assert_run_python_ok(r)
     # result_repr is the repr of a list — should contain at least one entry
     assert r.result_repr != "[]", f"{module_name} has no callable surface"
+
+
+# ---- kiface-resident binding lifecycle (Pattern B) ----
+
+@pytest.mark.parametrize("module_name,kiface_frame", KIFACE_RESIDENT_MODULES)
+def test_kiface_binding_appears_after_load(kicad, module_name, kiface_frame):
+    """Kiface-resident bindings register lazily on kiface load.
+
+    Pattern B contract:
+      1. Module isn't importable before the kiface is loaded.
+      2. show_frame(<editor>) triggers kiface load → register_on_load hook
+         creates the module and inserts into sys.modules.
+      3. Module is importable after.
+
+    Doesn't assert (1) strictly — if an earlier test spawned the editor
+    the module is already there, which is fine. The load step is
+    idempotent.
+    """
+    # Trigger the kiface (idempotent — Player(true) is a no-op if already up)
+    r = kicad.run_python(
+        f"import kicad_native_gui as g; g.show_frame({kiface_frame!r})"
+    )
+    assert_run_python_ok(r)
+    assert "'ok': True" in r.result_repr, r.result_repr
+
+    # Module is now importable
+    r = kicad.run_python(
+        f"import {module_name}; "
+        f"[name for name in dir({module_name}) if not name.startswith('_')]"
+    )
+    assert_run_python_ok(r)
+    assert r.result_repr != "[]", f"{module_name} has no surface after kiface load"
+    assert_kicad_alive(kicad)

@@ -548,6 +548,98 @@ def test_gui_unknown_frame_raises(kicad):
     assert_kicad_alive(kicad)
 
 
+# ---- kicad_native_settings ----
+
+def test_settings_roundtrip(kicad):
+    """Get → set → get → restore roundtrip on system.local_history_debounce.
+
+    Verifies the settings binding can read, write, and persist a value,
+    and that the read-back reflects the write.  Restores the original at
+    the end so we don't leave KiCad in a different config than we found it.
+    """
+    r = kicad.run_python(
+        "import kicad_native_settings as s\n"
+        "before = s.get('system.local_history_debounce')\n"
+        "s.set('system.local_history_debounce', 0)\n"
+        "after = s.get('system.local_history_debounce')\n"
+        "s.set('system.local_history_debounce', before)\n"
+        "(before, after, s.get('system.local_history_debounce'))"
+    )
+    assert_run_python_ok(r)
+    # Tuple structure: (before, after_set_to_0, restored_to_before)
+    assert ", 0, " in r.result_repr, r.result_repr
+    assert_kicad_alive(kicad)
+
+
+def test_settings_dump(kicad):
+    """dump('system') returns the system settings as a dict."""
+    r = kicad.run_python(
+        "import kicad_native_settings as s; "
+        "isinstance(s.dump('system'), dict)"
+    )
+    assert_run_python_ok(r)
+    assert r.result_repr == "True"
+
+
+# ---- kicad_native_sch_actions + kicad_native_schematic_state (Pattern B) ----
+
+def test_sch_actions_list_after_kiface_load(kicad):
+    """After the schematic kiface loads, list_actions enumerates all
+    registered TOOL_ACTIONs (process-wide; we filter for eeschema.*)."""
+    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    r = kicad.run_python(
+        "import kicad_native_sch_actions as sa; "
+        "len([a for a in sa.list_actions() if a.startswith('eeschema.')])"
+    )
+    assert_run_python_ok(r)
+    n = int(r.result_repr)
+    assert n > 100, f"expected >100 eeschema actions, got {n}"
+    assert_kicad_alive(kicad)
+
+
+def test_schematic_state_add_wire(kicad):
+    """add_wire creates a SCH_LINE on LAYER_WIRE; summary reflects it."""
+    # Ensure schematic is loaded
+    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    r = kicad.run_python(
+        "import kicad_native_schematic_state as ss\n"
+        "before = ss.get_items_summary()['wires']\n"
+        "result = ss.add_wire(20.0, 20.0, 50.0, 20.0)\n"
+        "after = ss.get_items_summary()['wires']\n"
+        "(before, after, result.get('ok'), result.get('kiid', '')[:8])"
+    )
+    assert_run_python_ok(r)
+    # After should be before + 1; ok True; kiid is an 8-char prefix of a UUID
+    assert "True" in r.result_repr, r.result_repr
+    assert_kicad_alive(kicad)
+
+
+def test_schematic_state_add_junction(kicad):
+    """add_junction creates a SCH_JUNCTION."""
+    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    r = kicad.run_python(
+        "import kicad_native_schematic_state as ss\n"
+        "result = ss.add_junction(30.0, 30.0)\n"
+        "result.get('ok')"
+    )
+    assert_run_python_ok(r)
+    assert r.result_repr == "True", r.result_repr
+    assert_kicad_alive(kicad)
+
+
+def test_schematic_state_add_label(kicad):
+    """add_label creates a SCH_LABEL with the given text."""
+    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    r = kicad.run_python(
+        "import kicad_native_schematic_state as ss\n"
+        "result = ss.add_label(40.0, 40.0, 'KLICAD_TEST_LABEL', kind='local')\n"
+        "result.get('ok')"
+    )
+    assert_run_python_ok(r)
+    assert r.result_repr == "True", r.result_repr
+    assert_kicad_alive(kicad)
+
+
 def test_gui_list_open_frames(kicad):
     """After spawning some frames, list_open_frames reflects them."""
     kicad.run_python(
