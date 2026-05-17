@@ -1,0 +1,7 @@
+# KliCAD creates these inside any project directory when the project is
+# opened in the editor.  Excluded so test runs don't pollute the fixture.
+~*.lck
+.history/
+*.kicad_prl
+*-backups/
+.DS_Store

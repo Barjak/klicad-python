@@ -33,7 +33,12 @@ from kipy import KiCad
 from kipy.errors import ConnectionError as KipyConnectionError
 
 
-SWITCH_PROJECT_DIR = Path("/Users/shopnew/switchfiles/switch")
+# The switch project is the canonical test board / schematic used across
+# the suite (DRC, ERC, exports, 3D viewer snapshot, sync, diff, etc.).
+# Bundled as a fixture so the suite is runnable on any checkout of this
+# repo.  The user's live working copy lives at ~/switchfiles/switch/ and
+# is independent — edits there do NOT affect tests.
+SWITCH_PROJECT_DIR = Path(__file__).resolve().parent / "fixtures" / "switch_project"
 SWITCH_PCB = SWITCH_PROJECT_DIR / "switch.kicad_pcb"
 SWITCH_SCH = SWITCH_PROJECT_DIR / "switch.kicad_sch"
 INSTALL_DIR = Path("/Users/shopnew/kicad-build/install/KiCad.app")
