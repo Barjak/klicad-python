@@ -20,6 +20,7 @@ from conftest import assert_kicad_alive, assert_run_python_ok
 # Every binding TU defines one PYBIND11_EMBEDDED_MODULE; this is the list.
 ALL_BINDING_MODULES = [
     "kicad_native",
+    "kicad_native_design_blocks",
     "kicad_native_drc",
     "kicad_native_erc",
     "kicad_native_export_3d",
@@ -38,10 +39,12 @@ ALL_BINDING_MODULES = [
     "kicad_native_jobset",
     "kicad_native_kiway_events",
     "kicad_native_library_tables",
+    "kicad_native_local_history",
     "kicad_native_pcb_calculator",
     "kicad_native_project_manager",
     "kicad_native_pcb_import",
     "kicad_native_pcb_upgrade",
+    "kicad_native_pcm",
     "kicad_native_render",
     "kicad_native_sch_upgrade",
     "kicad_native_settings",
@@ -52,12 +55,16 @@ ALL_BINDING_MODULES = [
 # Kiface-resident modules (Pattern B in BINDING_PATTERN.md).  These only
 # become importable after the relevant editor kiface has been loaded.
 KIFACE_RESIDENT_MODULES = [
+    ("kicad_native_annotation",       "schematic"),
     ("kicad_native_sch_actions",      "schematic"),
     ("kicad_native_schematic_state",  "schematic"),
     ("kicad_native_symbol_editor",    "symbol_editor"),
     ("kicad_native_simulator",        "simulator"),
+    ("kicad_native_3d_resolver",      "pcb_editor"),
+    ("kicad_native_drc_rules",        "pcb_editor"),
     ("kicad_native_pcb_state",        "pcb_editor"),
     ("kicad_native_pcb_actions",      "pcb_editor"),
+    ("kicad_native_stackup",          "pcb_editor"),
     ("kicad_native_footprint_editor", "footprint_editor"),
     ("kicad_native_gerbview",         "gerbview"),
     ("kicad_native_pagelayout",       "page_layout"),
