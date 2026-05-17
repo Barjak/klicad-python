@@ -20,7 +20,9 @@ from conftest import assert_kicad_alive, assert_run_python_ok
 # Every binding TU defines one PYBIND11_EMBEDDED_MODULE; this is the list.
 ALL_BINDING_MODULES = [
     "kicad_native",
+    "kicad_native_bitmap2component",
     "kicad_native_design_blocks",
+    "kicad_native_diff",
     "kicad_native_drc",
     "kicad_native_erc",
     "kicad_native_export_3d",
@@ -56,15 +58,21 @@ ALL_BINDING_MODULES = [
 # become importable after the relevant editor kiface has been loaded.
 KIFACE_RESIDENT_MODULES = [
     ("kicad_native_annotation",       "schematic"),
+    ("kicad_native_hierarchy",        "schematic"),
     ("kicad_native_sch_actions",      "schematic"),
     ("kicad_native_schematic_state",  "schematic"),
+    ("kicad_native_sim_advanced",     "simulator"),
     ("kicad_native_symbol_editor",    "symbol_editor"),
     ("kicad_native_simulator",        "simulator"),
     ("kicad_native_3d_resolver",      "pcb_editor"),
+    ("kicad_native_3d_viewer",        "pcb_editor"),
     ("kicad_native_drc_rules",        "pcb_editor"),
+    ("kicad_native_netinfo",          "pcb_editor"),
     ("kicad_native_pcb_state",        "pcb_editor"),
     ("kicad_native_pcb_actions",      "pcb_editor"),
     ("kicad_native_stackup",          "pcb_editor"),
+    ("kicad_native_sync",             "pcb_editor"),
+    ("kicad_native_cvpcb",            "cvpcb"),
     ("kicad_native_footprint_editor", "footprint_editor"),
     ("kicad_native_gerbview",         "gerbview"),
     ("kicad_native_pagelayout",       "page_layout"),
