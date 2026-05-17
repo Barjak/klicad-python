@@ -165,21 +165,13 @@ def test_export_sch_bom(kicad, tmp_path):
 
 # ---- Upgrades ----
 
-@pytest.mark.xfail(reason=(
-    "upstream: PCBNEW_JOBS_HANDLER's save path fails with 'Cannot rename "
-    "temp file over <empty>: No such file or directory' in embedded GUI "
-    "mode, regardless of whether the JOB targets the loaded board or a "
-    "copy.  Root cause is in the BOARD_LOADER::SaveBoard rename machinery "
-    "interacting with KiCad's already-open file handle.  Binding "
-    "dispatches cleanly; no crash.  When upstream fixes the save flow "
-    "(or when our binding opens a separate kiface session), this turns green."
-))
 def test_pcb_upgrade_on_loaded_board(kicad):
     """PCB upgrade against the currently-loaded board.
 
-    Tests the no-different-path code path — even targeting the actually-
-    loaded file still hits the upstream save-rename bug.  Documented for
-    visibility; the binding itself works (no crash, structured error)."""
+    Previously xfailed: PCBNEW_JOBS_HANDLER's save-rename failed with
+    "Cannot rename temp file over <empty>" because the editor had no
+    loaded filename.  Now passes because open_board ensures the editor
+    has a real BOARD::GetFileName() before the upgrade runs."""
     target = str(SWITCH_PCB)
     r = kicad.run_python(
         "import kicad_native_pcb_upgrade as u\n"
@@ -190,17 +182,15 @@ def test_pcb_upgrade_on_loaded_board(kicad):
     assert "'ok': True" in r.result_repr, r.result_repr
 
 
-@pytest.mark.xfail(reason=(
-    "upstream constraint: in GUI mode, PCBNEW_JOBS_HANDLER::getBoard "
-    "returns editFrame->GetBoard() regardless of the JOB's m_filename. "
-    "So upgrading a copy at a different path conflicts with the loaded "
-    "project on save-rename.  Documented for visibility; the right "
-    "binding-side workaround is to close/reopen the project around the "
-    "upgrade, which destroys live state — too aggressive for our use."
-))
 def test_pcb_upgrade_on_unrelated_copy(kicad, switch_project_copy):
-    """Demonstrates the upstream constraint above.  When upstream loosens
-    getBoard() to honor the JOB's path, this turns green."""
+    """PCB upgrade against an unrelated copy at a different path.
+
+    Previously xfailed: PCBNEW_JOBS_HANDLER::getBoard() returns the
+    editor's GetBoard() regardless of the JOB's m_filename, so upgrading
+    a copy at a different path used to conflict with the loaded project
+    on save-rename.  Now passes with open_board ensuring a real loaded
+    BOARD::GetFileName() — the rename path no longer touches an empty
+    target."""
     target = switch_project_copy / "switch.kicad_pcb"
     r = kicad.run_python(
         "import kicad_native_pcb_upgrade as u\n"
@@ -483,28 +473,47 @@ def test_gui_show_frame(kicad, auto_dismiss_dialogs, frame_name):
 # Frames that need preconditions before they can spawn.  Each gets its
 # own test that sets up the precondition first.
 
-def test_gui_show_3d_viewer_needs_pcb_first(kicad, auto_dismiss_dialogs):
-    """3D viewer can't spawn without an open PCB editor first.
+def test_gui_show_3d_viewer_returns_redirect(kicad, auto_dismiss_dialogs):
+    """show_frame('3d_viewer') deliberately can't spawn the viewer.
 
-    Documents the constraint: ``show_frame('3d_viewer')`` returns
-    ok=False with a clear error message when no PCB context exists.
-    The right user flow is:
-      1. show_frame('pcb_editor')   — opens the editor with current board
-      2. show_frame('3d_viewer')    — now has board context
-
-    This test verifies both: the failure mode without context is graceful
-    (not a crash) and the success after spawning pcb_editor works.
+    Upstream pcbnew's IFACE::CreateKiWindow has no case for
+    FRAME_PCB_DISPLAY3D — the viewer is spawned as a child of
+    PCB_EDIT_FRAME via PCB_BASE_FRAME::CreateAndShow3D_Frame, which
+    can't be reached from libkicommon.  show_frame returns a clear
+    redirect pointing users at kicad_native_3d_viewer (which lives in
+    pcbnew kiface and uses the correct spawn path).
     """
-    # Standalone fails cleanly
     r = kicad.run_python(
         "import kicad_native_gui as g\n"
         "g.show_frame('3d_viewer')"
     )
     assert_run_python_ok(r)
-    # Either spawns (some installs do — PCB editor was already up from a
-    # previous test), or returns ok=False with the kiface-load error message
-    assert ("'ok': True" in r.result_repr) or ("kiface failed" in r.result_repr), \
-        r.result_repr
+    assert "'ok': False" in r.result_repr, r.result_repr
+    assert "kicad_native_3d_viewer" in r.result_repr, r.result_repr
+    assert_kicad_alive(kicad)
+
+
+def test_3d_viewer_auto_spawns(kicad, auto_dismiss_dialogs):
+    """kicad_native_3d_viewer auto-spawns the viewer via the correct path.
+
+    Any call into the binding triggers require_3d_viewer_frame, which
+    finds the PCB editor and calls CreateAndShow3D_Frame on it.
+    """
+    r = kicad.run_python(
+        "import kicad_native_gui as g\n"
+        "g.show_frame('pcb_editor')\n"
+        "import kicad_native_3d_viewer as v\n"
+        "v.is_open()"
+    )
+    assert_run_python_ok(r)
+    # is_open() may return False the first time (frame not found in
+    # find_3d_viewer_frame's wxTopLevelWindows walk yet); the second
+    # call after a real method below proves the spawn.
+    r = kicad.run_python(
+        "import kicad_native_3d_viewer as v\n"
+        "v.set_render_mode('opengl')"
+    )
+    assert_run_python_ok(r)
     assert_kicad_alive(kicad)
 
 
