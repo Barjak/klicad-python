@@ -98,16 +98,21 @@ def _bootstrap_project_files(c: "Circuit", sch_path: Path) -> tuple[Path, Path, 
             f" (sheet_instances (path \"/\" (page \"1\"))))\n"
         )
 
-    # Project sym-lib-table — only write if not present.  Don't clobber.
+    # Project sym-lib-table: by default, DON'T write one.  The global
+    # symbol library table (configured at KiCad install / Preferences ->
+    # Manage Symbol Libraries) already provides Device, Transistor_BJT,
+    # Simulation_SPICE, power, etc.  Writing a project-scoped one with
+    # hardcoded ${KICAD_SYMBOL_DIR} paths invariably gets the env-var
+    # name wrong (KiCad 10 uses ${KICAD10_SYMBOL_DIR}) and / or assumes a
+    # single-file lib layout when upstream now ships exploded
+    # `.kicad_symdir/` directories.  Cleaner to leave the project table
+    # empty and let KiCad resolve via the global table.
+    #
+    # Future: when we need a project-local merged lib (e.g. for CI without
+    # a global table), write it via a separate Circuit.add_local_lib() API
+    # so the user opts in.
     if not sym_lib_table_path.exists():
-        sym_lib_table_path.write_text(
-            '(sym_lib_table\n'
-            '  (lib (name "Device") (type "KiCad") (uri "${KICAD_SYMBOL_DIR}/Device.kicad_sym") (options "") (descr ""))\n'
-            '  (lib (name "Transistor_BJT") (type "KiCad") (uri "${KICAD_SYMBOL_DIR}/Transistor_BJT.kicad_sym") (options "") (descr ""))\n'
-            '  (lib (name "Simulation_SPICE") (type "KiCad") (uri "${KICAD_SYMBOL_DIR}/Simulation_SPICE.kicad_sym") (options "") (descr ""))\n'
-            '  (lib (name "power") (type "KiCad") (uri "${KICAD_SYMBOL_DIR}/power.kicad_sym") (options "") (descr ""))\n'
-            ')\n'
-        )
+        sym_lib_table_path.write_text("(sym_lib_table)\n")
 
     # Gather every distinct model the parts reference + concatenate the
     # corresponding .model lines from the configured model_lib_paths.
