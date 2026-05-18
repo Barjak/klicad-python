@@ -240,6 +240,26 @@ def to_kicad_sch(
     if not r.ok:
         raise RuntimeError(f"open_schematic failed: {r.exception_traceback}")
 
+    # Idempotency guard: full-rebuild path is not idempotent — running
+    # twice on the same schematic doubles the placements (each add_symbol
+    # appends; we don't delete pre-existing content yet).  Phase C will
+    # add incremental update via diff/apply.  For now, refuse to proceed
+    # if the schematic already has symbols on it — the user must clear
+    # them manually (Edit → Select All → Delete) in the schematic editor,
+    # or delete the .kicad_sch file before launching KiCad.
+    r = kicad.run_python(
+        "import kicad_native_schematic_state as ss; "
+        "ss.get_items_summary().get('symbols', 0)"
+    )
+    if r.ok and int(r.result_repr) > 0:
+        raise RuntimeError(
+            f"to_kicad_sch() refuses to run on a schematic that already "
+            f"has {r.result_repr} symbols; running would double-place them. "
+            f"Either clear the schematic (Edit → Select All → Delete in "
+            f"the editor) or delete {sch_path} + launch KiCad on the "
+            f"project from scratch.  Phase C will add incremental update."
+        )
+
     placed = _place_parts(c, kicad, models_lib_path)
     labeled = _label_pins(c, kicad, placed)
     _place_power_symbols(c, kicad)
@@ -283,12 +303,14 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path) -> dict[str, str]:
             snippet += (
                 f"ss.set_symbol_field(kiid, 'Sim.Library', {str(models_lib_path)!r})\n"
             )
-            # Also force Sim.Model = the part's model name in case the
-            # symbol's Value field differs from the model name.  Cheap to
-            # set unconditionally.
+            # KiCad's SPICE pipeline (eeschema/sim/) looks for Sim.Name
+            # as the model identifier — NOT Sim.Model (which was an earlier
+            # KiCad 7-era convention).  Without Sim.Name the netlist
+            # generator emits '<ref>.unknown' as the model name and the
+            # deck fails to simulate.  Set Sim.Name to the model name.
             if p.model:
                 snippet += (
-                    f"ss.set_symbol_field(kiid, 'Sim.Model', {p.model!r})\n"
+                    f"ss.set_symbol_field(kiid, 'Sim.Name', {p.model!r})\n"
                 )
         snippet += "kiid"
 
