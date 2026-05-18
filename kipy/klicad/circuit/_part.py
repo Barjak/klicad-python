@@ -17,8 +17,88 @@ The map is anchored to the specific lib_id we pick.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import ClassVar
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# SPICE-source-spec → KiCad Simulation_SPICE symbol mapping
+# ──────────────────────────────────────────────────────────────────────────
+#
+# KiCad's Simulation_SPICE library has one symbol per source type (VDC,
+# VPULSE, VSIN, VPWL, VEXP, ISIN, etc.) and KiCad's schematic-to-SPICE
+# exporter uses the symbol's Sim.Type / Sim.Params fields to emit the
+# source line.  If we place a VDC symbol but its Value field contains
+# 'PULSE(...)', the exporter emits a malformed source line and the
+# resulting netlist either fails to parse or produces a singular matrix
+# at solve time (KiCad's current-probe wrapper turns the bad source
+# into a near-short).
+#
+# Translation tables.  SPICE arg order vs KiCad Sim.Params parameter
+# name list:
+#
+#   PULSE(v1 v2 td tr tf pw  per [phase])    KiCad: y1 y2 td tr tf tw  per [phase]
+#   SIN  (vo va fr  td theta phase)          KiCad: dc ampl f  td theta phase
+#   EXP  (v1 v2 td1 tau1 td2 tau2)           KiCad: y1 y2 td1 tau1 td2 tau2
+#   PWL  (t1 v1 t2 v2 ...)                   KiCad: pwl="t1 v1 t2 v2 ..."
+#
+# (KiCad uses 'tw' for what SPICE calls 'pw'; same value.)
+
+_SOURCE_SPEC: dict[tuple[str, str], tuple[str, list[str] | None]] = {
+    ("PULSE", "V"): ("Simulation_SPICE:VPULSE",
+                     ["y1", "y2", "td", "tr", "tf", "tw", "per", "phase"]),
+    ("PULSE", "I"): ("Simulation_SPICE:IPULSE",
+                     ["y1", "y2", "td", "tr", "tf", "tw", "per", "phase"]),
+    ("SIN",   "V"): ("Simulation_SPICE:VSIN",
+                     ["dc", "ampl", "f", "td", "theta", "phase"]),
+    ("SIN",   "I"): ("Simulation_SPICE:ISIN",
+                     ["dc", "ampl", "f", "td", "theta", "phase"]),
+    ("EXP",   "V"): ("Simulation_SPICE:VEXP",
+                     ["y1", "y2", "td1", "tau1", "td2", "tau2"]),
+    ("EXP",   "I"): ("Simulation_SPICE:IEXP",
+                     ["y1", "y2", "td1", "tau1", "td2", "tau2"]),
+    ("PWL",   "V"): ("Simulation_SPICE:VPWL", None),  # special-cased
+    ("PWL",   "I"): ("Simulation_SPICE:IPWL", None),
+}
+
+_SPEC_RE = re.compile(r"^\s*([A-Za-z]+)\s*\((.*)\)\s*$", re.DOTALL)
+
+
+def _parse_source_spec(ac: str, device: str) -> tuple[str, str, str]:
+    """Parse a SPICE source spec like 'PULSE(0 12 0 10n 10n 4u 10u)'.
+
+    Returns (kicad_lib_id, sim_type, sim_params_string).  Raises ValueError
+    if the spec can't be parsed or the source type isn't a recognized
+    KiCad symbol.  For unrecognized SPICE types, the caller is expected
+    to fall back to VDC and put the raw string in Value (lossy, but the
+    SPICE side still works through to_spice_deck()).
+    """
+    m = _SPEC_RE.match(ac)
+    if not m:
+        raise ValueError(f"unrecognized source spec {ac!r} (expected TYPE(args))")
+    stype = m.group(1).upper()
+    args_str = m.group(2).strip()
+    key = (stype, device)
+    if key not in _SOURCE_SPEC:
+        raise ValueError(
+            f"source type {stype!r} is not mapped to a KiCad Simulation_SPICE "
+            f"symbol; supported: PULSE, SIN, PWL, EXP"
+        )
+    lib_id, names = _SOURCE_SPEC[key]
+    args = re.split(r"[\s,]+", args_str)
+    if stype == "PWL":
+        # Pairs of (t v); keep them as the inner string verbatim.
+        sim_params = f'pwl="{" ".join(args)}"'
+    else:
+        assert names is not None
+        if len(args) > len(names):
+            raise ValueError(
+                f"{stype}: got {len(args)} args, KiCad only models {len(names)} "
+                f"({names})"
+            )
+        sim_params = " ".join(f"{n}={v}" for n, v in zip(names, args))
+    return lib_id, stype, sim_params
 
 
 @dataclass
@@ -234,6 +314,12 @@ class V(Part):
     dc: float | None = None
     ac:  str | None = None       # raw SPICE source spec, e.g. "SIN(0 1 1k)"
 
+    # Set when ac= is supplied: KiCad-side selection for to_kicad_sch().
+    # sim_type=DC + sim_params=None means "use the VDC symbol, no Sim.Params
+    # needed" (KiCad reads Value as the DC voltage).
+    sim_type:   str | None = None
+    sim_params: str | None = None
+
     def __init__(self, ref: str, plus: str, minus: str, dc: float | None = None,
                  ac: str | None = None, footprint: str = ""):
         if dc is None and ac is None:
@@ -243,6 +329,15 @@ class V(Part):
         self.connections = {"+": plus, "-": minus}
         self.dc = dc
         self.ac = ac
+        if ac is not None:
+            lib_id, stype, params = _parse_source_spec(ac, "V")
+            # Override the class-level VDC default for this instance.
+            self.kicad_lib_id = lib_id
+            self.sim_type = stype
+            self.sim_params = params
+        else:
+            self.sim_type = "DC"
+            self.sim_params = None
 
     def spice_line(self) -> str:
         p, m = self.connections["+"], self.connections["-"]
@@ -263,6 +358,9 @@ class I(Part):                              # noqa: E742 — yes, I is the name
     dc: float | None = None
     ac: str | None = None
 
+    sim_type:   str | None = None
+    sim_params: str | None = None
+
     def __init__(self, ref: str, plus: str, minus: str, dc: float | None = None,
                  ac: str | None = None, footprint: str = ""):
         if dc is None and ac is None:
@@ -272,6 +370,14 @@ class I(Part):                              # noqa: E742 — yes, I is the name
         self.connections = {"+": plus, "-": minus}
         self.dc = dc
         self.ac = ac
+        if ac is not None:
+            lib_id, stype, params = _parse_source_spec(ac, "I")
+            self.kicad_lib_id = lib_id
+            self.sim_type = stype
+            self.sim_params = params
+        else:
+            self.sim_type = "DC"
+            self.sim_params = None
 
     def spice_line(self) -> str:
         p, m = self.connections["+"], self.connections["-"]

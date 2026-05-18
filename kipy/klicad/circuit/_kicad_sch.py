@@ -289,16 +289,29 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path) -> dict[str, str]:
 
     for p in c.parts:
         x, y = positions[p.ref]
-        # Build a single round-trip that adds + values + (optionally) sets
-        # Sim.Library to minimise IPC chatter.
+        # For non-DC V/I sources we placed a typed source symbol
+        # (VPULSE/VSIN/...) whose Value field is just a label — don't
+        # overwrite it with the raw SPICE spec string, set Sim.Params
+        # instead (which is what KiCad's netlist exporter reads).
+        is_typed_source = (
+            p.kind in ("V", "I")
+            and getattr(p, "sim_params", None) is not None
+        )
         snippet = (
             f"import kicad_native_schematic_state as ss\n"
             f"sym = ss.add_symbol({p.kicad_lib_id!r}, {p.ref!r}, {x}, {y})\n"
             f"if not sym.get('ok'): raise RuntimeError(f'add_symbol failed for {p.ref}: ' + str(sym))\n"
             f"kiid = sym['kiid']\n"
-            f"value = {(p.value or p.model)!r}\n"
-            f"if value: ss.set_symbol_value(kiid, value)\n"
         )
+        if not is_typed_source:
+            snippet += (
+                f"value = {(p.value or p.model)!r}\n"
+                f"if value: ss.set_symbol_value(kiid, value)\n"
+            )
+        else:
+            snippet += (
+                f"ss.set_symbol_field(kiid, 'Sim.Params', {p.sim_params!r})\n"
+            )
         if p.kind in needs_lib:
             snippet += (
                 f"ss.set_symbol_field(kiid, 'Sim.Library', {str(models_lib_path)!r})\n"
