@@ -57,6 +57,7 @@ from ._analyses import (
     Control,
     ALL_ANALYSES,
 )
+from ._partition import Block, partition
 
 # Absolute path to the bundled SPICE model starter library.  Pass to
 # Circuit.add_model_lib(STANDARD_MODEL_LIB).
@@ -68,4 +69,5 @@ __all__ = [
     "Analysis", "Tran", "Ac", "Dc", "Op", "Noise", "Control",
     "ALL_PARTS", "ALL_ANALYSES",
     "STANDARD_MODEL_LIB",
+    "Block", "partition",
 ]

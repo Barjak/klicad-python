@@ -254,6 +254,15 @@ class Circuit:
         from ._spice import to_spice_deck
         return to_spice_deck(self)
 
+    def partition(self) -> list:
+        """Group parts into hierarchical-sheet candidates (Phase D).
+
+        Returns a list of Block objects (see ._partition).  Useful as a
+        diagnostic before to_kicad_sch grows multi-sheet output.
+        """
+        from ._partition import partition
+        return partition(self)
+
     def to_kicad_sch(self, path: str | Path, *, kicad=None) -> dict:
         """Generate a .kicad_sch file via the live KliCAD bindings.
 

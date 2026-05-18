@@ -22,6 +22,8 @@ dependencies = [
     # 3.11: Self
     # 3.13: @deprecated
     "typing_extensions >=4.13.2 ; python_version < '3.13'",
+    # kipy.klicad.circuit.partition uses Louvain community detection.
+    "networkx >=3.0",
 ]
 
 [project.scripts]
