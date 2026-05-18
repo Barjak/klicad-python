@@ -41,7 +41,15 @@ if TYPE_CHECKING:
 
 
 # Communities smaller than this stay in the top-level sheet.
-MIN_BLOCK_SIZE = 3
+# Per user guidance: target 1-7 components per block, with no hard
+# penalty for going higher — so we accept singletons & pairs (size>=1)
+# but the boundary-ratio guard still filters out useless splits.
+MIN_BLOCK_SIZE = 1
+
+# Soft "preferred max" — communities larger than this get a small
+# nudge to subdivide (currently informational only; future passes can
+# use it to break up huge components).  No hard rejection.
+PREFERRED_MAX_SIZE = 7
 
 # Boundary-fan-out cutoff.  Lower = stricter (fewer / tighter blocks);
 # higher = more / looser blocks.  HANDOFF suggests ~0.3.

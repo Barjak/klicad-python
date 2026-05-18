@@ -263,11 +263,12 @@ class Circuit:
         from ._partition import partition
         return partition(self)
 
-    def to_kicad_sch(self, path: str | Path, *, kicad=None) -> dict:
+    def to_kicad_sch(self, path: str | Path, *, kicad=None,
+                     route: bool = False) -> dict:
         """Generate a .kicad_sch file via the live KliCAD bindings.
 
         Requires a running KliCAD instance (creates / uses one via kipy.klicad.KliCAD).
         Returns a small status dict; the .kicad_sch is written to disk.
         """
         from ._kicad_sch import to_kicad_sch
-        return to_kicad_sch(self, path, kicad=kicad)
+        return to_kicad_sch(self, path, kicad=kicad, route=route)

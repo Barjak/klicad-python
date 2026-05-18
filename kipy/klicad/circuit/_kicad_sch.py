@@ -196,6 +196,7 @@ def to_kicad_sch(
     sch_path,
     *,
     kicad=None,
+    route: bool = False,
 ) -> dict:
     """Generate a complete .kicad_sch (+ project files + models.lib) for circuit c.
 
@@ -259,7 +260,16 @@ def to_kicad_sch(
         )
 
     placed = _place_parts(c, kicad, models_lib_path)
-    labeled = _label_pins(c, kicad, placed)
+    if route:
+        # Phase F router: explicit wires instead of label-coincidence.
+        # Power/ground stay label-driven through _place_power_symbols
+        # because routing them would dominate the sheet visually.
+        from ._route import route_signal_nets
+        labeled = _label_power_pins_only(c, kicad, placed)
+        wires = route_signal_nets(c, kicad, placed)
+    else:
+        labeled = _label_pins(c, kicad, placed)
+        wires = 0
     _place_power_symbols(c, kicad)
 
     # Save
@@ -273,6 +283,7 @@ def to_kicad_sch(
         "ok":               True,
         "parts_placed":     len(placed),
         "labels_placed":    labeled,
+        "wires_placed":     wires,
         "sch_path":         str(sch_path),
         "models_lib_path":  str(models_lib_path),
         "project_path":     str(pro_path),
@@ -332,6 +343,34 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path) -> dict[str, str]:
         placed[p.ref] = ast.literal_eval(r.result_repr)
 
     return placed
+
+
+def _label_power_pins_only(c: "Circuit", kicad, placed: dict[str, str]) -> int:
+    """Like _label_pins but only emits labels on power/ground pins.
+
+    Used when route=True: signal nets get explicit wires from _route;
+    power/ground stay label-driven (routing them would dominate the
+    sheet — they touch nearly every part).
+    """
+    powerlike = {name for name, meta in c.nets.items()
+                 if meta.kind in ("power", "ground")}
+    n = 0
+    for p in c.parts:
+        kiid = placed[p.ref]
+        for spice_pin, net_name in p.connections.items():
+            if net_name not in powerlike:
+                continue
+            kicad_pin_num = p.kicad_pin_map[spice_pin]
+            r = kicad.run_python(
+                f"import kicad_native_schematic_state as ss\n"
+                f"pos = ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})\n"
+                f"if not pos.get('ok'): raise RuntimeError('pin pos failed: ' + str(pos))\n"
+                f"ss.add_label(pos['x_mm'], pos['y_mm'], {net_name!r})\n"
+                f"True"
+            )
+            if r.ok:
+                n += 1
+    return n
 
 
 def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
