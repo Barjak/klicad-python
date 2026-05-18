@@ -106,6 +106,13 @@ def drive_demo(c: Circuit) -> int:
           f"{result['labels_placed']} pin labels")
     print(f"    models lib: {result['models_lib_path']}")
 
+    # Pre-annotate so ReadyToNetlist doesn't pop the ModalAnnotate dialog
+    # (HANDOFF lesson 4: the modal blocks IPC because the handler is queued
+    # behind it; click_dialog_button can't dismiss because it's also queued).
+    r = k.run_python("import kicad_native_annotation as a; a.annotate(scope='all')")
+    if not r.ok:
+        print(f"WARN: pre-annotate failed: {r.exception_traceback}", file=sys.stderr)
+
     # Run the simulation via the canonical SPICE deck
     deck = c.to_spice_deck()
     r = k.run_python(
