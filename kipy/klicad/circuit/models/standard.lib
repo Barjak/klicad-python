@@ -1,0 +1,50 @@
+* KliCAD bundled SPICE model starter library.
+*
+* Conservative parameter sets for the most common discrete parts.  These
+* are functional models good enough for behavioral simulation; for tight
+* analog work, swap in the vendor's authoritative model.
+
+* ---- BJTs ----
+.model 2N3904 NPN(IS=6.734f XTI=3 EG=1.11 VAF=74.03 BF=416.4 NE=1.259
++ ISE=6.734f IKF=66.78m XTB=1.5 BR=.7374 NC=2 ISC=0 IKR=0 RC=1
++ CJC=3.638p MJC=.3085 VJC=.75 FC=.5 CJE=4.493p MJE=.2593 VJE=.75
++ TR=239.5n TF=301.2p ITF=.4 VTF=4 XTF=2 Rb=10)
+
+.model 2N3906 PNP(IS=1.41f XTI=3 EG=1.11 VAF=18.7 BF=180.7 NE=1.5
++ ISE=0 IKF=80m XTB=1.5 BR=4.977 NC=2 ISC=0 IKR=0 RC=2.5
++ CJC=9.728p MJC=.5776 VJC=.75 FC=.5 CJE=8.063p MJE=.3677 VJE=.75
++ TR=33.42n TF=179.3p ITF=.4 VTF=4 XTF=6 Rb=10)
+
+.model BC547 NPN(IS=7.049f XTI=3 EG=1.11 VAF=63.2 BF=374.6 NE=1.576
++ ISE=10.39f IKF=80m XTB=1.5 BR=1.5 NC=2 ISC=0 IKR=0 RC=2.5
++ CJC=6.33p MJC=.31 VJC=.65 FC=.5 CJE=11.5p MJE=.4 VJE=.69
++ TR=10n TF=410p ITF=.6 VTF=1.7 XTF=3 Rb=10)
+
+.model BC557 PNP(IS=1.02f XTI=3 EG=1.11 VAF=23.4 BF=257 NE=1.27
++ ISE=0 IKF=100m XTB=1.5 BR=2.0 NC=2 ISC=0 IKR=0 RC=2.5
++ CJC=11.5p MJC=.42 VJC=.66 FC=.5 CJE=11.5p MJE=.36 VJE=.69
++ TR=10n TF=600p ITF=.3 VTF=1.7 XTF=3 Rb=10)
+
+* ---- Diodes ----
+.model 1N4148 D(IS=4.352u N=1.906 BV=110 IBV=0.0001 RS=0.6458 CJO=7.048p
++ VJ=.869 M=.03 FC=.5 TT=3.48n)
+
+.model 1N4001 D(IS=14.11n N=1.984 RS=33.89m BV=75 IBV=10u
++ CJO=25.89p VJ=.3245 M=.44 TT=5.7u)
+
+* Generic 'LED' — red 1.8 V Vf, low-current.  Override per-design when you
+* want colour-accurate Vf / spectrum / capacitance numbers.
+.model LED D(IS=1e-12 N=4 RS=10 BV=5 IBV=10u
++ CJO=10p VJ=.75 M=.5 TT=1n)
+
+* ---- MOSFETs ----
+.model 2N7000 NMOS(LEVEL=1 VTO=2.0 KP=0.05 LAMBDA=0.01 RD=1 RS=1
++ CGSO=10p CGDO=10p)
+
+* Generic small-signal NMOS for behavioral sims.
+.model NMOS_S NMOS(LEVEL=1 VTO=1.0 KP=0.05 LAMBDA=0.01)
+.model PMOS_S PMOS(LEVEL=1 VTO=-1.0 KP=0.025 LAMBDA=0.02)
+
+* ---- Default fallback diode (used when D() is constructed without a model
+*      override).  Conservative behavioral.
+.model DEFAULT_D D(IS=1e-14 N=1 RS=0.1 CJO=2p)
