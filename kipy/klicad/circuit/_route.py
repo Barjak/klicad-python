@@ -80,6 +80,17 @@ def route_signal_nets(c: "Circuit", kicad, placed: dict[str, str]) -> int:
     # routes must avoid these to prevent accidental connection between
     # different nets (KiCad merges collinear/coincident wires at save).
     forbidden_points: set[tuple[float, float]] = set()
+    # ALSO forbid every power/ground pin coord.  Those pins carry a
+    # label (placed by _label_power_pins_only) tying them to GND/+5V/
+    # etc.  If a signal wire touches one, KiCad connects the signal
+    # net to power — silently corrupting the netlist.
+    for p in c.parts:
+        for spice_pin, net_name in p.connections.items():
+            meta = c.nets.get(net_name)
+            if meta and meta.kind in ("power", "ground"):
+                pos = pin_positions.get((p.ref, spice_pin))
+                if pos:
+                    forbidden_points.add(pos)
     segments_emitted = 0
 
     # Each terminal's own pin coord is always allowed for the net it

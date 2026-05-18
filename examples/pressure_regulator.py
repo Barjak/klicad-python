@@ -138,9 +138,10 @@ def drive_demo(c: Circuit, proj_dir: Path) -> int:
     print(f"[1] KliCAD {ver} reachable")
 
     sch_path = proj_dir / f"{proj_dir.name}.kicad_sch"
-    result = c.to_schematic(sch_path, kicad=k, layout="clustered", route=False)
+    result = c.to_schematic(sch_path, kicad=k, layout="clustered", route=True)
     print(f"[2] schematic generated: {result['parts_placed']} parts, "
-          f"{result['labels_placed']} labels")
+          f"{result['labels_placed']} labels, "
+          f"{result.get('wires_placed','?')} wires")
 
     # Pre-annotate so ReadyToNetlist doesn't pop the ModalAnnotate dialog.
     r = k.run_python("import kicad_native_annotation as a; a.annotate(scope='all')")
