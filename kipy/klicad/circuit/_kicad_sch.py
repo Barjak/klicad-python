@@ -142,23 +142,32 @@ def _layout_positions(c: "Circuit", engine: str = "sugiyama"
                       ) -> dict[str, tuple[float, float]]:
     """Assign (x_mm, y_mm) to each part ref.
 
-    engine: "sugiyama" (default) — pure signal-flow layering.
-            "clustered"          — run partition() first, then Sugiyama
-                                   with same-block parts forced adjacent
-                                   in the within-layer ordering.
+    engine:
+      "sugiyama"  (default) — pure signal-flow layering.
+      "clustered"           — Sugiyama with partition() block-id as a
+                              secondary ordering key.
+      "spring"              — force-directed (Fruchterman-Reingold with
+                              cluster gravity); blocks settle apart by
+                              ~50 mm with intra-block springs holding
+                              same-block parts tight.
     """
-    from ._layout import sugiyama_positions
-    if engine == "clustered":
-        from ._partition import partition
+    from ._partition import partition
+
+    if engine in ("clustered", "spring"):
         blocks = partition(c)
-        # block-id per ref; -1 / 0 / 1 / 2 ... so cluster key sorts blocks
-        # apart from the leftover (which gets the lowest id).
         block_of: dict[str, int] = {}
         for i, b in enumerate(blocks):
             for ref in b.parts:
                 block_of[ref] = i
-        return sugiyama_positions(c, cluster_key=block_of)
-    return sugiyama_positions(c)
+    else:
+        block_of = None
+
+    if engine == "spring":
+        from ._layout import spring_positions
+        return spring_positions(c, cluster_key=block_of)
+
+    from ._layout import sugiyama_positions
+    return sugiyama_positions(c, cluster_key=block_of)
 
 
 # Position power/ground stub symbols off the row.  We need ONE +5V symbol

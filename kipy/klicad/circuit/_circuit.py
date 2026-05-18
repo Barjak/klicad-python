@@ -263,10 +263,12 @@ class Circuit:
                  models.lib get auto-created if absent.
         kicad:   optional kipy.KiCad instance (a new one is created if None).
         layout:  placement engine.  "sugiyama" (default) lays parts out in
-                 columns by signal-flow depth.  "clustered" first calls the
-                 community-detection partitioner internally so parts in the
-                 same functional sub-block cluster next to each other on
-                 the sheet.
+                 columns by signal-flow depth.  "clustered" reuses Sugiyama
+                 but with partition() block-id as a secondary ordering key
+                 so same-block parts end up adjacent.  "spring" runs
+                 force-directed Fruchterman-Reingold (via networkx) with
+                 phantom intra-block springs — best for circuits with
+                 multiple weakly-connected functional sub-blocks.
         route:   if True, draw explicit A* wires between same-net pins
                  (opt-in; default is label-based connectivity).
 

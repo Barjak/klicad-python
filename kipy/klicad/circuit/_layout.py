@@ -1,4 +1,4 @@
-"""Sugiyama-style schematic placement (HANDOFF Phase E).
+"""Schematic placement engines (HANDOFF Phases E + force-directed).
 
 Replaces the old "everything in one horizontal row at y=ROW_Y" stub
 that lived in _kicad_sch.py.  Goal: parts that drive flow left-to-right
@@ -273,4 +273,221 @@ def _coord_assign(layered: list[list[str]]) -> dict[str, tuple[float, float]]:
                 ORIGIN_X + li * LAYER_DX,
                 y_top    + si * SLOT_DY,
             )
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Spring / force-directed placement (Fruchterman-Reingold via networkx)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# Treats nets as springs pulling connected parts together, all part
+# pairs as Coulomb-repulsive, and partition() blocks as extra "cluster
+# gravity" — same-block parts get bonus springs between them so the
+# block stays clumped on the sheet.
+#
+# Hooke + Coulomb energy minimization is well-understood for graph
+# drawing; networkx.spring_layout is the off-the-shelf
+# Fruchterman-Reingold implementation we lean on.
+
+# Preferred separation between adjacent cluster centroids.  ≈3× the
+# Sugiyama intra-cluster spacing — clusters are visually distinct
+# without making the sheet enormous.
+CLUSTER_SEPARATION_MM = 50.0
+
+# How much extra "spring weight" we add between every pair of parts
+# in the same partition block (over and above their net-shared edges).
+# 1.0 = same strength as a single shared net.  Set high enough that
+# intra-cluster pull dominates inter-cluster signal-net pulls — so
+# clusters tighten and Coulomb repulsion shoves them apart cleanly.
+INTRA_CLUSTER_BONUS = 2.0
+
+# Optimal inter-node distance in mm (passed to networkx as the `k` arg
+# after normalization).  Larger -> more breathing room between parts.
+INTRA_CLUSTER_SPACING_MM = 15.0
+
+# Initial jitter around the cluster centroid, in mm.  Keeps the FR
+# solver from starting parts on exactly the same point (degenerate
+# zero-distance Coulomb term).
+INIT_JITTER_MM = 5.0
+
+# FR iterations.  100 converges fine for ≤50 nodes.
+SPRING_ITERATIONS = 100
+
+# Final coordinates snapped to this grid step.
+SNAP_GRID_MM = 2.54
+
+
+def spring_positions(c: "Circuit",
+                     cluster_key: dict[str, int] | None = None,
+                     ) -> dict[str, tuple[float, float]]:
+    """Force-directed placement with optional cluster-gravity.
+
+    cluster_key: ref -> int (typically the partition() block index).
+    When supplied, intra-block phantom springs pull same-block parts
+    together AND initial positions are seeded so blocks start on a
+    grid roughly CLUSTER_SEPARATION_MM apart.
+    """
+    import math
+    import random
+    import networkx as nx
+
+    if not c.parts:
+        return {}
+
+    G = _build_spring_graph(c, cluster_key)
+
+    # Isolated nodes (no signal-net edges) — typically power-supply V
+    # sources, bulk caps on power rails, etc. — have no spring force
+    # and would otherwise float wherever the initial seed puts them
+    # and pollute the bounding box.  Pin them along the bottom edge
+    # so they don't deform the layout of the actually-connected parts.
+    isolated = [n for n in G.nodes if G.degree(n) == 0]
+    connected_nodes = [n for n in G.nodes if G.degree(n) > 0]
+
+    # Initial positions: place each cluster's parts in a small disk
+    # around its centroid on a coarse grid.
+    init_pos = _seed_positions(c, cluster_key)
+
+    # `scale` and `k` are tuned for the CONNECTED subgraph.  We then
+    # bolt on the isolated nodes at fixed peripheral positions.
+    n_clusters_connected = len({
+        cluster_key.get(n, -1) for n in connected_nodes
+    }) if cluster_key else 1
+    scale = CLUSTER_SEPARATION_MM * max(1.5, math.sqrt(n_clusters_connected))
+    k = INTRA_CLUSTER_SPACING_MM
+
+    if connected_nodes:
+        # Pin the isolated nodes during the run so the layout area
+        # doesn't get hijacked by their initial scatter positions.
+        # Pre-place them on a horizontal row well below the spring box.
+        peripheral_y = -scale - 2 * CLUSTER_SEPARATION_MM
+        for i, ref in enumerate(sorted(isolated)):
+            init_pos[ref] = (i * INTRA_CLUSTER_SPACING_MM, peripheral_y)
+        pos = nx.spring_layout(
+            G,
+            pos=init_pos,
+            fixed=isolated if isolated else None,
+            weight="weight",
+            iterations=SPRING_ITERATIONS,
+            scale=scale,
+            k=k,
+            seed=42,
+        )
+    else:
+        pos = init_pos
+
+    # Shift to positive quadrant + snap to grid.
+    xs = [p[0] for p in pos.values()]
+    ys = [p[1] for p in pos.values()]
+    dx = ORIGIN_X - min(xs)
+    dy = ORIGIN_Y - min(ys)
+    out: dict[str, tuple[float, float]] = {}
+    for ref, (x, y) in pos.items():
+        out[ref] = (
+            _snap(x + dx, SNAP_GRID_MM),
+            _snap(y + dy, SNAP_GRID_MM),
+        )
+
+    # If snapping collapsed two parts onto the same point, nudge one.
+    return _resolve_collisions(out)
+
+
+def _build_spring_graph(c: "Circuit",
+                        cluster_key: dict[str, int] | None):
+    """Net-adjacency graph with edge weights:
+      - 1 per signal net shared between two parts
+      - +INTRA_CLUSTER_BONUS if both parts are in the same cluster
+    Power/ground nets are excluded; they'd over-couple every part."""
+    import networkx as nx
+    G = nx.Graph()
+    for p in c.parts:
+        G.add_node(p.ref)
+
+    net_to_refs: dict[str, list[str]] = {}
+    for p in c.parts:
+        for net in p.connections.values():
+            meta = c.nets.get(net)
+            if meta and meta.kind in ("power", "ground"):
+                continue
+            net_to_refs.setdefault(net, []).append(p.ref)
+
+    for refs in net_to_refs.values():
+        for i in range(len(refs)):
+            for j in range(i + 1, len(refs)):
+                a, b = refs[i], refs[j]
+                if G.has_edge(a, b):
+                    G[a][b]["weight"] += 1
+                else:
+                    G.add_edge(a, b, weight=1)
+
+    if cluster_key:
+        from collections import defaultdict
+        by_cluster: dict[int, list[str]] = defaultdict(list)
+        for ref, cid in cluster_key.items():
+            by_cluster[cid].append(ref)
+        for refs in by_cluster.values():
+            for i in range(len(refs)):
+                for j in range(i + 1, len(refs)):
+                    a, b = refs[i], refs[j]
+                    if G.has_edge(a, b):
+                        G[a][b]["weight"] += INTRA_CLUSTER_BONUS
+                    else:
+                        G.add_edge(a, b, weight=INTRA_CLUSTER_BONUS)
+    return G
+
+
+def _seed_positions(c: "Circuit",
+                    cluster_key: dict[str, int] | None,
+                    ) -> dict[str, tuple[float, float]]:
+    """Per-part starting position.  Each cluster centroid sits on a
+    coarse grid at CLUSTER_SEPARATION_MM spacing; parts get jittered
+    in a small disk around their centroid."""
+    import math
+    import random
+    if cluster_key is None:
+        # Random scatter in the working area.
+        rng = random.Random(42)
+        size = CLUSTER_SEPARATION_MM * max(1, math.isqrt(len(c.parts)))
+        return {p.ref: (rng.uniform(0, size), rng.uniform(0, size))
+                for p in c.parts}
+
+    from collections import defaultdict
+    by_cluster: dict[int, list[str]] = defaultdict(list)
+    for p in c.parts:
+        by_cluster[cluster_key.get(p.ref, -1)].append(p.ref)
+
+    n_clusters = len(by_cluster)
+    cols = max(1, math.ceil(math.sqrt(n_clusters)))
+    centroids: dict[int, tuple[float, float]] = {}
+    for i, cid in enumerate(sorted(by_cluster)):
+        centroids[cid] = (
+            (i %  cols) * CLUSTER_SEPARATION_MM,
+            (i // cols) * CLUSTER_SEPARATION_MM,
+        )
+
+    rng = random.Random(42)
+    out: dict[str, tuple[float, float]] = {}
+    for cid, refs in by_cluster.items():
+        cx, cy = centroids[cid]
+        for ref in refs:
+            out[ref] = (cx + rng.uniform(-INIT_JITTER_MM, INIT_JITTER_MM),
+                        cy + rng.uniform(-INIT_JITTER_MM, INIT_JITTER_MM))
+    return out
+
+
+def _snap(v: float, step: float) -> float:
+    return round(v / step) * step
+
+
+def _resolve_collisions(pos: dict[str, tuple[float, float]],
+                        ) -> dict[str, tuple[float, float]]:
+    """If grid-snapping landed two parts on the same point, walk one
+    of them outward by SNAP_GRID_MM until the point is free."""
+    occupied: dict[tuple[float, float], str] = {}
+    out: dict[str, tuple[float, float]] = {}
+    for ref, (x, y) in pos.items():
+        while (x, y) in occupied:
+            x += SNAP_GRID_MM   # arbitrary direction; small bias
+        occupied[(x, y)] = ref
+        out[ref] = (x, y)
     return out

@@ -138,7 +138,7 @@ def drive_demo(c: Circuit, proj_dir: Path) -> int:
     print(f"[1] KliCAD {ver} reachable")
 
     sch_path = proj_dir / f"{proj_dir.name}.kicad_sch"
-    result = c.to_schematic(sch_path, kicad=k, layout="clustered", route=True)
+    result = c.to_schematic(sch_path, kicad=k, layout="spring", route=True)
     print(f"[2] schematic generated: {result['parts_placed']} parts, "
           f"{result['labels_placed']} labels, "
           f"{result.get('wires_placed','?')} wires")
