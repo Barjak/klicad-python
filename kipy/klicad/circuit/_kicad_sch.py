@@ -138,13 +138,26 @@ def _bootstrap_project_files(c: "Circuit", sch_path: Path) -> tuple[Path, Path, 
 # Placement layout — phase B is a simple horizontal row
 # ──────────────────────────────────────────────────────────────────────────
 
-def _layout_positions(c: "Circuit") -> dict[str, tuple[float, float]]:
-    """Assign (x_mm, y_mm) to each part ref via Sugiyama-style placement.
+def _layout_positions(c: "Circuit", engine: str = "sugiyama"
+                      ) -> dict[str, tuple[float, float]]:
+    """Assign (x_mm, y_mm) to each part ref.
 
-    Delegates to _layout.sugiyama_positions().  See that module for the
-    four-pass algorithm description.
+    engine: "sugiyama" (default) — pure signal-flow layering.
+            "clustered"          — run partition() first, then Sugiyama
+                                   with same-block parts forced adjacent
+                                   in the within-layer ordering.
     """
     from ._layout import sugiyama_positions
+    if engine == "clustered":
+        from ._partition import partition
+        blocks = partition(c)
+        # block-id per ref; -1 / 0 / 1 / 2 ... so cluster key sorts blocks
+        # apart from the leftover (which gets the lowest id).
+        block_of: dict[str, int] = {}
+        for i, b in enumerate(blocks):
+            for ref in b.parts:
+                block_of[ref] = i
+        return sugiyama_positions(c, cluster_key=block_of)
     return sugiyama_positions(c)
 
 
@@ -191,11 +204,12 @@ def _power_lib_id_for(name: str) -> str:
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────────
 
-def to_kicad_sch(
+def to_schematic(
     c: "Circuit",
     sch_path,
     *,
     kicad=None,
+    layout: str = "sugiyama",
     route: bool = False,
 ) -> dict:
     """Generate a complete .kicad_sch (+ project files + models.lib) for circuit c.
@@ -252,14 +266,14 @@ def to_kicad_sch(
     )
     if r.ok and int(r.result_repr) > 0:
         raise RuntimeError(
-            f"to_kicad_sch() refuses to run on a schematic that already "
+            f"to_schematic() refuses to run on a schematic that already "
             f"has {r.result_repr} symbols; running would double-place them. "
             f"Either clear the schematic (Edit → Select All → Delete in "
             f"the editor) or delete {sch_path} + launch KiCad on the "
             f"project from scratch.  Phase C will add incremental update."
         )
 
-    placed = _place_parts(c, kicad, models_lib_path)
+    placed = _place_parts(c, kicad, models_lib_path, layout=layout)
     if route:
         # Phase F router: explicit wires instead of label-coincidence.
         # Power/ground stay label-driven through _place_power_symbols
@@ -290,9 +304,10 @@ def to_kicad_sch(
     }
 
 
-def _place_parts(c: "Circuit", kicad, models_lib_path: Path) -> dict[str, str]:
+def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
+                 layout: str = "sugiyama") -> dict[str, str]:
     """Place every Part as a SCH_SYMBOL.  Returns ref -> kiid mapping."""
-    positions = _layout_positions(c)
+    positions = _layout_positions(c, engine=layout)
     placed: dict[str, str] = {}
     needs_lib = {"NPN", "PNP", "D", "LED"}  # part kinds whose models live in the .lib
 

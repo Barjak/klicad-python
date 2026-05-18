@@ -1,4 +1,4 @@
-"""Eyeball tests for kipy.klicad.circuit.partition() — HANDOFF Phase D.
+"""Eyeball tests for kipy.klicad.circuit._partition.partition — HANDOFF Phase D.
 
 Three composite circuits exercise the Louvain-based heuristic:
 
@@ -20,8 +20,11 @@ from __future__ import annotations
 import pytest
 
 from kipy.klicad.circuit import (
-    Circuit, R, C, L, D, LED, NPN, V, Tran, partition, Block,
+    Circuit, R, C, L, D, LED, NPN, V, Tran,
 )
+# partition is intentionally not on the public surface — these tests
+# poke the internal helper directly since they exercise the algorithm.
+from kipy.klicad.circuit._partition import partition, Block
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -132,7 +135,7 @@ def _print_blocks(label: str, blocks: list[Block]) -> None:
 
 
 def test_led_osc_is_one_block(capsys):
-    blocks = _led_osc().partition()
+    blocks = partition(_led_osc())
     _print_blocks("LED osc", blocks)
     # The cross-coupled astable has no clean cut: every part is multiply
     # connected to the rest.  Expect just the top-level block (and
@@ -145,7 +148,7 @@ def test_led_osc_is_one_block(capsys):
 
 
 def test_two_stage_ce_splits_into_stages(capsys):
-    blocks = _two_stage_ce().partition()
+    blocks = partition(_two_stage_ce())
     _print_blocks("Two-stage CE", blocks)
     subs = blocks[1:]
     # We want at least 2 sub-blocks (the two stages).  Could legitimately
@@ -165,7 +168,7 @@ def test_two_stage_ce_splits_into_stages(capsys):
 
 
 def test_ac_to_dc_splits_into_stages(capsys):
-    blocks = _ac_to_dc().partition()
+    blocks = partition(_ac_to_dc())
     _print_blocks("AC to DC", blocks)
     subs = blocks[1:]
     # Bridge rectifier (4 diodes + ac nets) is one tight cluster.  The

@@ -254,17 +254,27 @@ class Circuit:
         from ._spice import to_spice_deck
         return to_spice_deck(self)
 
-    def partition(self) -> list:
-        """Group parts into hierarchical-sheet candidates (Phase D).
-
-        Returns a list of Block objects (see ._partition).  Useful as a
-        diagnostic before to_kicad_sch grows multi-sheet output.
-        """
-        from ._partition import partition
-        return partition(self)
-
-    def to_kicad_sch(self, path: str | Path, *, kicad=None,
+    def to_schematic(self, path: str | Path, *, kicad=None,
+                     layout: str = "sugiyama",
                      route: bool = False) -> dict:
+        """Author this Circuit into a live KiCad schematic.
+
+        path:    .kicad_sch file path.  Sibling .kicad_pro / sym-lib-table /
+                 models.lib get auto-created if absent.
+        kicad:   optional kipy.KiCad instance (a new one is created if None).
+        layout:  placement engine.  "sugiyama" (default) lays parts out in
+                 columns by signal-flow depth.  "clustered" first calls the
+                 community-detection partitioner internally so parts in the
+                 same functional sub-block cluster next to each other on
+                 the sheet.
+        route:   if True, draw explicit A* wires between same-net pins
+                 (opt-in; default is label-based connectivity).
+
+        Returns {ok, parts_placed, labels_placed, wires_placed, sch_path,
+                 models_lib_path, project_path}.
+        """
+        from ._kicad_sch import to_schematic
+        return to_schematic(self, path, kicad=kicad, layout=layout, route=route)
         """Generate a .kicad_sch file via the live KliCAD bindings.
 
         Requires a running KliCAD instance (creates / uses one via kipy.klicad.KliCAD).

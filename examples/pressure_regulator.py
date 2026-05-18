@@ -50,7 +50,7 @@ HERE = Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent.parent))
 
 from kipy.klicad.circuit import (
-    Circuit, R, C, L, D, NPN, V, Tran, partition, STANDARD_MODEL_LIB,
+    Circuit, R, C, L, D, NPN, V, Tran, STANDARD_MODEL_LIB,
 )
 
 
@@ -120,18 +120,9 @@ def build_circuit() -> Circuit:
 # ──────────────────────────────────────────────────────────────────────────
 
 def spice_only(c: Circuit) -> int:
-    """Print the SPICE deck and a partition() summary.  No KliCAD needed."""
+    """Print the SPICE deck.  No KliCAD needed."""
     print(f"=== SPICE deck ({c.name}) ===")
     print(c.to_spice_deck())
-    print()
-
-    blocks = c.partition()
-    print(f"=== partition() — {len(blocks)} block(s) ===")
-    for i, b in enumerate(blocks):
-        kind = "TOP" if i == 0 else "SUB"
-        print(f"  [{kind}] {b.suggested_name}  size={b.size}  "
-              f"boundary={sorted(b.boundary_nets)}")
-        print(f"      parts: {b.parts}")
     return 0
 
 
@@ -147,7 +138,7 @@ def drive_demo(c: Circuit, proj_dir: Path) -> int:
     print(f"[1] KliCAD {ver} reachable")
 
     sch_path = proj_dir / f"{proj_dir.name}.kicad_sch"
-    result = c.to_kicad_sch(sch_path, kicad=k, route=False)
+    result = c.to_schematic(sch_path, kicad=k, layout="clustered", route=False)
     print(f"[2] schematic generated: {result['parts_placed']} parts, "
           f"{result['labels_placed']} labels")
 

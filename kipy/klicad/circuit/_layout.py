@@ -65,13 +65,20 @@ ORIGIN_Y = 12 * _GRID
 CROSSING_PASSES = 3
 
 
-def sugiyama_positions(c: "Circuit") -> dict[str, tuple[float, float]]:
+def sugiyama_positions(c: "Circuit",
+                       cluster_key: dict[str, int] | None = None,
+                       ) -> dict[str, tuple[float, float]]:
     """Assign (x_mm, y_mm) to each part ref.
 
     Layout shape: parts arranged in columns by signal-flow depth from
     voltage/current sources, centered vertically within each column.
 
-    Single-sheet only; per-block sheet emission comes later.
+    cluster_key: optional ref -> int mapping (typically the partition
+    block index).  When supplied, the within-layer barycentric ordering
+    breaks ties by cluster id, so same-cluster parts end up adjacent on
+    the sheet — gives a "block-aware" layout on a single page.
+
+    Single-sheet only.
     """
     if not c.parts:
         return {}
@@ -79,8 +86,8 @@ def sugiyama_positions(c: "Circuit") -> dict[str, tuple[float, float]]:
     adj = _build_adjacency(c)
     sources = _pick_sources(c)
     layer_of = _layer_assign(c, adj, sources)
-    layered = _group_by_layer(layer_of)
-    order   = _minimize_crossings(layered, adj)
+    layered = _group_by_layer(layer_of, cluster_key=cluster_key)
+    order   = _minimize_crossings(layered, adj, cluster_key=cluster_key)
     return _coord_assign(order)
 
 
@@ -156,17 +163,27 @@ def _layer_assign(c: "Circuit", adj: dict[str, set[str]],
     return layer
 
 
-def _group_by_layer(layer_of: dict[str, int]) -> list[list[str]]:
-    """layer_of -> list-of-lists indexed by layer, refs alphabetic
-    within each layer as a stable initial ordering."""
+def _group_by_layer(layer_of: dict[str, int],
+                    cluster_key: dict[str, int] | None = None,
+                    ) -> list[list[str]]:
+    """layer_of -> list-of-lists indexed by layer.
+
+    Initial within-layer ordering is (cluster_id, ref) so same-cluster
+    parts start out adjacent before the crossing-minimization passes
+    rearrange them.
+    """
     if not layer_of:
         return []
     n_layers = max(layer_of.values()) + 1
     out: list[list[str]] = [[] for _ in range(n_layers)]
     for ref, lyr in layer_of.items():
         out[lyr].append(ref)
-    for layer in out:
-        layer.sort()
+    if cluster_key is None:
+        for layer in out:
+            layer.sort()
+    else:
+        for layer in out:
+            layer.sort(key=lambda r: (cluster_key.get(r, -1), r))
     return out
 
 
@@ -175,7 +192,9 @@ def _group_by_layer(layer_of: dict[str, int]) -> list[list[str]]:
 # ──────────────────────────────────────────────────────────────────────────
 
 def _minimize_crossings(layered: list[list[str]],
-                        adj: dict[str, set[str]]) -> list[list[str]]:
+                        adj: dict[str, set[str]],
+                        cluster_key: dict[str, int] | None = None,
+                        ) -> list[list[str]]:
     """Iterative barycentric reordering.
 
     On each pass, walk the layers in alternating direction.  For each
@@ -191,28 +210,26 @@ def _minimize_crossings(layered: list[list[str]],
     layered = [list(L) for L in layered]   # mutate-safe copy
     for sweep in range(CROSSING_PASSES):
         if sweep % 2 == 0:
-            # Top-down: layer L is reordered using layer L-1 as the anchor.
             for L in range(1, len(layered)):
                 layered[L] = _reorder_by_neighbour_slot(
-                    layered[L], layered[L - 1], adj
+                    layered[L], layered[L - 1], adj, cluster_key
                 )
         else:
-            # Bottom-up: layer L reordered against layer L+1.
             for L in range(len(layered) - 2, -1, -1):
                 layered[L] = _reorder_by_neighbour_slot(
-                    layered[L], layered[L + 1], adj
+                    layered[L], layered[L + 1], adj, cluster_key
                 )
     return layered
 
 
 def _reorder_by_neighbour_slot(nodes: list[str],
                                anchor: list[str],
-                               adj: dict[str, set[str]]) -> list[str]:
+                               adj: dict[str, set[str]],
+                               cluster_key: dict[str, int] | None = None,
+                               ) -> list[str]:
     """Reorder `nodes` by the mean slot index of each node's neighbours
-    in `anchor`.  Nodes with no neighbour in `anchor` keep their
-    current relative position (assigned a barycenter equal to their
-    current index, which preserves the stable initial alphabetic
-    order)."""
+    in `anchor`, with an optional cluster id as a secondary sort key
+    so same-cluster parts stay adjacent across passes."""
     anchor_slot = {ref: i for i, ref in enumerate(anchor)}
 
     def barycenter(ref: str, fallback: float) -> float:
@@ -221,9 +238,17 @@ def _reorder_by_neighbour_slot(nodes: list[str],
             return fallback
         return sum(slots) / len(slots)
 
-    indexed = [(barycenter(r, float(i)), i, r) for i, r in enumerate(nodes)]
-    indexed.sort()                   # (bary, original_idx, ref) — stable
-    return [r for _, _, r in indexed]
+    def sort_key(idx_ref):
+        i, r = idx_ref
+        bary = barycenter(r, float(i))
+        cid  = cluster_key.get(r, -1) if cluster_key else 0
+        # Primary sort: cluster id (keeps blocks contiguous).
+        # Secondary:    barycenter (places block within layer correctly).
+        # Tertiary:     original index for stability.
+        return (cid, bary, i)
+
+    indexed = sorted(enumerate(nodes), key=sort_key)
+    return [r for _, r in indexed]
 
 
 # ──────────────────────────────────────────────────────────────────────────

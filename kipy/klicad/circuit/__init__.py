@@ -6,7 +6,7 @@ The Python object itself is the source of truth.  Two derived artifacts get
 generated from it:
 
   * a SPICE netlist (.to_spice_deck()) for direct simulation via ngspice
-  * a KiCad schematic (.to_kicad_sch()) for visual review + GUI Play button
+  * a KiCad schematic (.to_schematic()) for visual review + GUI Play button
 
 Both views are derived from the same source, so there is no schematic/SPICE
 divergence by construction.
@@ -37,7 +37,7 @@ Example:
     deck = c.to_spice_deck()
 
     # Or generate the visual schematic for the GUI:
-    c.to_kicad_sch("/tmp/led-osc.kicad_sch")
+    c.to_schematic("/tmp/led-osc.kicad_sch")
 """
 
 from pathlib import Path
@@ -57,7 +57,6 @@ from ._analyses import (
     Control,
     ALL_ANALYSES,
 )
-from ._partition import Block, partition
 
 # Absolute path to the bundled SPICE model starter library.  Pass to
 # Circuit.add_model_lib(STANDARD_MODEL_LIB).
@@ -69,5 +68,4 @@ __all__ = [
     "Analysis", "Tran", "Ac", "Dc", "Op", "Noise", "Control",
     "ALL_PARTS", "ALL_ANALYSES",
     "STANDARD_MODEL_LIB",
-    "Block", "partition",
 ]

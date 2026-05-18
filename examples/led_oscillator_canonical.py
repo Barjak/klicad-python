@@ -101,7 +101,7 @@ def drive_demo(c: Circuit) -> int:
     print(f"[2] project loaded: {PROJ_FILE.name}")
 
     # Generate the schematic into KliCAD's live state
-    result = c.to_kicad_sch(SCH_FILE, kicad=k)
+    result = c.to_schematic(SCH_FILE, kicad=k)
     print(f"[3] schematic generated: {result['parts_placed']} parts, "
           f"{result['labels_placed']} pin labels")
     print(f"    models lib: {result['models_lib_path']}")
