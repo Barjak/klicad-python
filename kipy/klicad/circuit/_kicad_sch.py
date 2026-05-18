@@ -139,15 +139,13 @@ def _bootstrap_project_files(c: "Circuit", sch_path: Path) -> tuple[Path, Path, 
 # ──────────────────────────────────────────────────────────────────────────
 
 def _layout_positions(c: "Circuit") -> dict[str, tuple[float, float]]:
-    """Assign (x_mm, y_mm) to each part ref.  Returns ref -> (x, y).
+    """Assign (x_mm, y_mm) to each part ref via Sugiyama-style placement.
 
-    Simple row layout for v1.  Phase C will replace with a graph-aware
-    placement algorithm.
+    Delegates to _layout.sugiyama_positions().  See that module for the
+    four-pass algorithm description.
     """
-    positions: dict[str, tuple[float, float]] = {}
-    for i, p in enumerate(c.parts):
-        positions[p.ref] = (_ROW_X0 + i * _PART_DX, _ROW_Y + _PART_DY / 2)
-    return positions
+    from ._layout import sugiyama_positions
+    return sugiyama_positions(c)
 
 
 # Position power/ground stub symbols off the row.  We need ONE +5V symbol
@@ -337,7 +335,7 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path) -> dict[str, str]:
 
 
 def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
-    """Drop a net-label at every pin coordinate.  Returns count placed."""
+    """Drop a text label at every pin coordinate.  Returns count placed."""
     n = 0
     for p in c.parts:
         kiid = placed[p.ref]
