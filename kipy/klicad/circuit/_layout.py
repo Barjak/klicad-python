@@ -289,10 +289,19 @@ def _coord_assign(layered: list[list[str]]) -> dict[str, tuple[float, float]]:
 # drawing; networkx.spring_layout is the off-the-shelf
 # Fruchterman-Reingold implementation we lean on.
 
-# Preferred separation between adjacent cluster centroids.  ≈3× the
-# Sugiyama intra-cluster spacing — clusters are visually distinct
-# without making the sheet enormous.
-CLUSTER_SEPARATION_MM = 50.0
+# Preferred separation between adjacent cluster centroids.  Tuned so the
+# whole layout lands inside an A4 landscape sheet (297×210 mm) without a
+# post-rescale that would crush intra-cluster spacing.
+CLUSTER_SEPARATION_MM = 30.0
+
+# Weight of the phantom edges added between EVERY pair of cluster
+# centroids.  Connected sub-blocks of a real circuit are often
+# electrically isolated on the signal side (they only share power/
+# ground), so without these phantom edges the spring graph has many
+# disconnected components and Coulomb repulsion drifts them apart
+# until they leave the sheet.  Keep this small so it nudges clusters
+# closer without breaking the cluster-as-tight-group geometry.
+INTER_CLUSTER_PHANTOM_WEIGHT = 0.2
 
 # How much extra "spring weight" we add between every pair of parts
 # in the same partition block (over and above their net-shared edges).
@@ -301,9 +310,15 @@ CLUSTER_SEPARATION_MM = 50.0
 # clusters tighten and Coulomb repulsion shoves them apart cleanly.
 INTRA_CLUSTER_BONUS = 2.0
 
-# Optimal inter-node distance in mm (passed to networkx as the `k` arg
-# after normalization).  Larger -> more breathing room between parts.
-INTRA_CLUSTER_SPACING_MM = 15.0
+# Optimal inter-node distance in mm (passed to networkx as the `k` arg).
+INTRA_CLUSTER_SPACING_MM = 12.0
+
+# After FR converges, compress each cluster's parts toward its own
+# centroid so the cluster's radius is at most this value.  Decouples
+# intra-cluster compactness from the inter-cluster spread the spring
+# simulation produces — without this, Coulomb repulsion between
+# disconnected sub-blocks balloons each cluster outward.
+CLUSTER_MAX_RADIUS_MM = 10.0
 
 # Initial jitter around the cluster centroid, in mm.  Keeps the FR
 # solver from starting parts on exactly the same point (degenerate
@@ -357,12 +372,19 @@ def spring_positions(c: "Circuit",
     k = INTRA_CLUSTER_SPACING_MM
 
     if connected_nodes:
-        # Pin the isolated nodes during the run so the layout area
-        # doesn't get hijacked by their initial scatter positions.
-        # Pre-place them on a horizontal row well below the spring box.
-        peripheral_y = -scale - 2 * CLUSTER_SEPARATION_MM
+        # Pin isolated nodes along the TOP edge of the cluster region.
+        # Putting them far outside the region would inflate the final
+        # bounding box (FR doesn't rescale when there are pinned
+        # nodes), and the connected parts would land off-sheet.
+        connected_xs = [init_pos[r][0] for r in connected_nodes if r in init_pos]
+        connected_ys = [init_pos[r][1] for r in connected_nodes if r in init_pos]
+        if connected_xs and connected_ys:
+            row_x0 = min(connected_xs)
+            row_y  = min(connected_ys) - CLUSTER_SEPARATION_MM
+        else:
+            row_x0, row_y = 0.0, 0.0
         for i, ref in enumerate(sorted(isolated)):
-            init_pos[ref] = (i * INTRA_CLUSTER_SPACING_MM, peripheral_y)
+            init_pos[ref] = (row_x0 + i * INTRA_CLUSTER_SPACING_MM, row_y)
         pos = nx.spring_layout(
             G,
             pos=init_pos,
@@ -376,17 +398,20 @@ def spring_positions(c: "Circuit",
     else:
         pos = init_pos
 
-    # Shift to positive quadrant + snap to grid.
+    # Compress each cluster's parts toward its own centroid so the
+    # cluster is visually tight even though Coulomb repulsion pushed
+    # its members outward during the spring simulation.
+    pos = _shrink_clusters(pos, cluster_key, CLUSTER_MAX_RADIUS_MM)
+
+    # Translate to positive quadrant + snap to KiCad's grid.
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     dx = ORIGIN_X - min(xs)
     dy = ORIGIN_Y - min(ys)
     out: dict[str, tuple[float, float]] = {}
     for ref, (x, y) in pos.items():
-        out[ref] = (
-            _snap(x + dx, SNAP_GRID_MM),
-            _snap(y + dy, SNAP_GRID_MM),
-        )
+        out[ref] = (_snap(x + dx, SNAP_GRID_MM),
+                    _snap(y + dy, SNAP_GRID_MM))
 
     # If snapping collapsed two parts onto the same point, nudge one.
     return _resolve_collisions(out)
@@ -425,6 +450,8 @@ def _build_spring_graph(c: "Circuit",
         by_cluster: dict[int, list[str]] = defaultdict(list)
         for ref, cid in cluster_key.items():
             by_cluster[cid].append(ref)
+
+        # Intra-cluster cohesion springs.
         for refs in by_cluster.values():
             for i in range(len(refs)):
                 for j in range(i + 1, len(refs)):
@@ -433,6 +460,18 @@ def _build_spring_graph(c: "Circuit",
                         G[a][b]["weight"] += INTRA_CLUSTER_BONUS
                     else:
                         G.add_edge(a, b, weight=INTRA_CLUSTER_BONUS)
+
+        # Inter-cluster phantom edges between one representative of each
+        # cluster.  Prevents disconnected-on-signal sub-blocks from
+        # drifting apart under Coulomb repulsion.
+        reps = [refs[0] for refs in by_cluster.values() if refs]
+        for i in range(len(reps)):
+            for j in range(i + 1, len(reps)):
+                a, b = reps[i], reps[j]
+                if G.has_edge(a, b):
+                    G[a][b]["weight"] += INTER_CLUSTER_PHANTOM_WEIGHT
+                else:
+                    G.add_edge(a, b, weight=INTER_CLUSTER_PHANTOM_WEIGHT)
     return G
 
 
@@ -456,14 +495,21 @@ def _seed_positions(c: "Circuit",
     for p in c.parts:
         by_cluster[cluster_key.get(p.ref, -1)].append(p.ref)
 
+    # Place cluster centroids on a circle.  Chord length between
+    # adjacent centroids ≈ CLUSTER_SEPARATION_MM, so radius is
+    # CLUSTER_SEPARATION_MM / (2 sin(π/n)).  Circle layout gives
+    # a 2-dimensional spread instead of the grid's "rows feel like
+    # columns" look when the grid has many disjoint clusters.
     n_clusters = len(by_cluster)
-    cols = max(1, math.ceil(math.sqrt(n_clusters)))
-    centroids: dict[int, tuple[float, float]] = {}
-    for i, cid in enumerate(sorted(by_cluster)):
-        centroids[cid] = (
-            (i %  cols) * CLUSTER_SEPARATION_MM,
-            (i // cols) * CLUSTER_SEPARATION_MM,
-        )
+    if n_clusters <= 1:
+        centroids = {cid: (0.0, 0.0) for cid in by_cluster}
+    else:
+        radius = CLUSTER_SEPARATION_MM / (2 * math.sin(math.pi / n_clusters))
+        centroids = {}
+        for i, cid in enumerate(sorted(by_cluster)):
+            theta = 2 * math.pi * i / n_clusters
+            centroids[cid] = (radius * math.cos(theta),
+                              radius * math.sin(theta))
 
     rng = random.Random(42)
     out: dict[str, tuple[float, float]] = {}
@@ -477,6 +523,43 @@ def _seed_positions(c: "Circuit",
 
 def _snap(v: float, step: float) -> float:
     return round(v / step) * step
+
+
+def _shrink_clusters(pos: dict[str, tuple[float, float]],
+                     cluster_key: dict[str, int] | None,
+                     max_radius_mm: float,
+                     ) -> dict[str, tuple[float, float]]:
+    """Per-cluster: if any part is more than max_radius_mm from the
+    cluster's centroid, scale that cluster's positions inward so the
+    farthest part lands exactly at max_radius_mm.  Decouples
+    intra-cluster compactness from inter-cluster spread."""
+    if cluster_key is None:
+        return pos
+    from collections import defaultdict
+    by_cluster: dict[int, list[str]] = defaultdict(list)
+    for ref, cid in cluster_key.items():
+        if ref in pos:
+            by_cluster[cid].append(ref)
+
+    out = dict(pos)
+    for cid, refs in by_cluster.items():
+        if len(refs) <= 1:
+            continue
+        cx = sum(out[r][0] for r in refs) / len(refs)
+        cy = sum(out[r][1] for r in refs) / len(refs)
+        max_r = 0.0
+        for r in refs:
+            dx, dy = out[r][0] - cx, out[r][1] - cy
+            d = (dx * dx + dy * dy) ** 0.5
+            if d > max_r:
+                max_r = d
+        if max_r <= max_radius_mm or max_r == 0:
+            continue
+        s = max_radius_mm / max_r
+        for r in refs:
+            x, y = out[r]
+            out[r] = (cx + (x - cx) * s, cy + (y - cy) * s)
+    return out
 
 
 def _resolve_collisions(pos: dict[str, tuple[float, float]],
