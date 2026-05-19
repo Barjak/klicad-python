@@ -289,10 +289,10 @@ def _coord_assign(layered: list[list[str]]) -> dict[str, tuple[float, float]]:
 # drawing; networkx.spring_layout is the off-the-shelf
 # Fruchterman-Reingold implementation we lean on.
 
-# Preferred separation between adjacent cluster centroids.  Tuned so the
-# whole layout lands inside an A4 landscape sheet (297×210 mm) without a
-# post-rescale that would crush intra-cluster spacing.
-CLUSTER_SEPARATION_MM = 30.0
+# Preferred chord between adjacent cluster centroids on the seeding
+# circle.  Has to be at least ~2 * CLUSTER_MAX_RADIUS_MM or clusters
+# overlap.  Tuned so the full layout fits inside A4 landscape.
+CLUSTER_SEPARATION_MM = 55.0
 
 # Weight of the phantom edges added between EVERY pair of cluster
 # centroids.  Connected sub-blocks of a real circuit are often
@@ -316,9 +316,18 @@ INTRA_CLUSTER_SPACING_MM = 12.0
 # After FR converges, compress each cluster's parts toward its own
 # centroid so the cluster's radius is at most this value.  Decouples
 # intra-cluster compactness from the inter-cluster spread the spring
-# simulation produces — without this, Coulomb repulsion between
-# disconnected sub-blocks balloons each cluster outward.
-CLUSTER_MAX_RADIUS_MM = 10.0
+# simulation produces.  ~25mm gives a 5-part cluster ~12mm between
+# centers, comfortable above the ~7mm body+pin footprint of a Device:R
+# at default orientation.
+CLUSTER_MAX_RADIUS_MM = 25.0
+
+# Target page-fit box for the centroids of clusters (not parts).  After
+# FR converges the inter-cluster spread can exceed an A4 sheet; we
+# scale the centroid offsets to fit this box, preserving each
+# cluster's intra-cluster geometry (so part spacing within a cluster
+# is NOT crushed by the page-fit).
+PAGE_FIT_W_MM = 230.0
+PAGE_FIT_H_MM = 150.0
 
 # Initial jitter around the cluster centroid, in mm.  Keeps the FR
 # solver from starting parts on exactly the same point (degenerate
@@ -402,6 +411,12 @@ def spring_positions(c: "Circuit",
     # cluster is visually tight even though Coulomb repulsion pushed
     # its members outward during the spring simulation.
     pos = _shrink_clusters(pos, cluster_key, CLUSTER_MAX_RADIUS_MM)
+
+    # Squeeze the *centroid layout* to fit a target page box without
+    # touching intra-cluster geometry: translate each part by its
+    # cluster's centroid delta.
+    pos = _fit_centroids_to_page(pos, cluster_key,
+                                 PAGE_FIT_W_MM, PAGE_FIT_H_MM)
 
     # Translate to positive quadrant + snap to KiCad's grid.
     xs = [p[0] for p in pos.values()]
@@ -525,6 +540,60 @@ def _snap(v: float, step: float) -> float:
     return round(v / step) * step
 
 
+def _fit_centroids_to_page(pos: dict[str, tuple[float, float]],
+                           cluster_key: dict[str, int] | None,
+                           page_w_mm: float, page_h_mm: float,
+                           ) -> dict[str, tuple[float, float]]:
+    """Rescale ONLY the inter-cluster centroid layout.  Each cluster's
+    parts get translated together (rigid body), so the intra-cluster
+    spacing produced by _shrink_clusters is preserved exactly."""
+    if cluster_key is None or not pos:
+        return pos
+    from collections import defaultdict
+    by_cluster: dict[int, list[str]] = defaultdict(list)
+    for ref, cid in cluster_key.items():
+        if ref in pos:
+            by_cluster[cid].append(ref)
+
+    # Cluster centroids.
+    centroids: dict[int, tuple[float, float]] = {}
+    for cid, refs in by_cluster.items():
+        cx = sum(pos[r][0] for r in refs) / len(refs)
+        cy = sum(pos[r][1] for r in refs) / len(refs)
+        centroids[cid] = (cx, cy)
+
+    # No clusters have parts in `pos`?  Nothing to rescale.
+    if not centroids:
+        return pos
+
+    cxs = [c[0] for c in centroids.values()]
+    cys = [c[1] for c in centroids.values()]
+    cx_span = max(cxs) - min(cxs)
+    cy_span = max(cys) - min(cys)
+    sx = page_w_mm / cx_span if cx_span > 0 else 1.0
+    sy = page_h_mm / cy_span if cy_span > 0 else 1.0
+    s = min(1.0, sx, sy)             # only scale DOWN; never inflate
+
+    if s >= 1.0:
+        return pos
+
+    # Compute each cluster's translation delta = (s-1) * (centroid - mean_centroid)
+    mean_cx = sum(cxs) / len(cxs)
+    mean_cy = sum(cys) / len(cys)
+    delta: dict[int, tuple[float, float]] = {}
+    for cid, (cx, cy) in centroids.items():
+        dx = (s - 1.0) * (cx - mean_cx)
+        dy = (s - 1.0) * (cy - mean_cy)
+        delta[cid] = (dx, dy)
+
+    out = {}
+    for ref, (x, y) in pos.items():
+        cid = cluster_key.get(ref, -1)
+        dx, dy = delta.get(cid, (0.0, 0.0))
+        out[ref] = (x + dx, y + dy)
+    return out
+
+
 def _shrink_clusters(pos: dict[str, tuple[float, float]],
                      cluster_key: dict[str, int] | None,
                      max_radius_mm: float,
@@ -565,12 +634,36 @@ def _shrink_clusters(pos: dict[str, tuple[float, float]],
 def _resolve_collisions(pos: dict[str, tuple[float, float]],
                         ) -> dict[str, tuple[float, float]]:
     """If grid-snapping landed two parts on the same point, walk one
-    of them outward by SNAP_GRID_MM until the point is free."""
+    of them outward by SNAP_GRID_MM steps in a square spiral until the
+    point is free.
+
+    Spiral (not pure +x) so multiple isolated nodes pinned to the same
+    horizontal row don't all chain east in a long line — they fan out
+    into a 2-D cluster around the contention point.
+    """
     occupied: dict[tuple[float, float], str] = {}
     out: dict[str, tuple[float, float]] = {}
+    # Spiral offsets in (dx, dy) units of SNAP_GRID_MM: outward rings,
+    # 4*r points per ring of radius r.
+    def _spiral():
+        for r in range(1, 100):
+            for i in range(-r, r):     yield ( r,  i)
+            for i in range(-r, r):     yield (-i,  r)
+            for i in range(r, -r, -1): yield (-r,  i)
+            for i in range(r, -r, -1): yield ( i, -r)
     for ref, (x, y) in pos.items():
-        while (x, y) in occupied:
-            x += SNAP_GRID_MM   # arbitrary direction; small bias
-        occupied[(x, y)] = ref
-        out[ref] = (x, y)
+        if (x, y) not in occupied:
+            occupied[(x, y)] = ref
+            out[ref] = (x, y)
+            continue
+        for dx, dy in _spiral():
+            nx, ny = x + dx * SNAP_GRID_MM, y + dy * SNAP_GRID_MM
+            if (nx, ny) not in occupied:
+                occupied[(nx, ny)] = ref
+                out[ref] = (nx, ny)
+                break
+        else:
+            # Spiral exhausted (shouldn't happen for any sane circuit);
+            # fall back to the original point and accept the overlap.
+            out[ref] = (x, y)
     return out
