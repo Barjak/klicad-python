@@ -1018,6 +1018,32 @@
 		(layer "Edge.Cuts")
 		(uuid "7dcd6b2b-d6d2-4e8d-ad53-3fa84f4ff546")
 	)
+	(gr_text "RFC.US"
+		(at 127.5 88.6 0)
+		(layer "B.SilkS")
+		(uuid "cbd83d1c-6c08-4b73-a092-f1eac51227ba")
+		(effects
+			(font
+				(size 1.5 1.5)
+				(thickness 0.3)
+				(bold yes)
+			)
+			(justify left bottom mirror)
+		)
+	)
+	(gr_text "2026"
+		(at 154.7 88.6 0)
+		(layer "B.SilkS")
+		(uuid "a6a5ec87-a71d-4deb-92ac-86cf6ae832c1")
+		(effects
+			(font
+				(size 1.5 1.5)
+				(thickness 0.3)
+				(bold yes)
+			)
+			(justify left bottom mirror)
+		)
+	)
 	(segment
 		(start 129.6 98.7)
 		(end 129.6 97.25)
