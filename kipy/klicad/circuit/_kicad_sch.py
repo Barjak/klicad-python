@@ -320,6 +320,18 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
     placed: dict[str, str] = {}
     needs_lib = {"NPN", "PNP", "D", "LED"}  # part kinds whose models live in the .lib
 
+    # XSubckt has no fixed KiCad symbol — schematic placement isn't wired
+    # up yet.  Fail early and clearly rather than passing an empty lib_id
+    # to add_symbol() and getting a cryptic KiCad error.
+    subckt_refs = [p.ref for p in c.parts if p.kind == "X"]
+    if subckt_refs:
+        raise NotImplementedError(
+            f"to_schematic() does not yet support XSubckt parts {subckt_refs}; "
+            f"they have no fixed KiCad symbol.  Use to_spice_deck() for "
+            f"subcircuit-based models, or model the device with an inline "
+            f".model card (Circuit.add_model) for now."
+        )
+
     for p in c.parts:
         x, y = positions[p.ref]
         # For non-DC V/I sources we placed a typed source symbol

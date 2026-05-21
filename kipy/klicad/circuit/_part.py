@@ -386,10 +386,78 @@ class I(Part):                              # noqa: E742 — yes, I is the name
         return f"{self.ref} {p} {m} {self.ac}"
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# SPICE subcircuit instances: X
+# ──────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class XSubckt(Part):
+    """SPICE subcircuit instance (an `X` element).
+
+    Instantiates a `.SUBCKT` defined in an included .lib — the form most
+    vendor TVS / Zener / op-amp / regulator models ship as.  Subcircuits
+    have an arbitrary, model-specific pin count and order, so unlike the
+    fixed-shape parts XSubckt takes its nodes as a positional list whose
+    order must match the .SUBCKT's terminal order.
+
+        c.add_model_lib("vendor_models/littelfuse_smaj_ca_tvs.lib")
+        c.add(XSubckt("D1", ["RAIL", "SW"], subckt="SMAJ24CA"))
+        # emits:  XD1 RAIL SW SMAJ24CA
+
+    SPICE requires a subcircuit instance line to start with 'X'; an 'X'
+    is prepended to the ref if it doesn't already have one (KiCad-style
+    ref 'D1' -> 'XD1', which SPICE accepts).
+
+    NOTE: schematic placement (to_schematic) is not yet supported for
+    XSubckt — it has no fixed KiCad symbol.  SPICE-deck only for now.
+    """
+    kind          = "X"
+    spice_letter  = "X"
+    kicad_lib_id  = ""          # no fixed symbol; to_schematic unsupported
+
+    subckt: str = ""
+
+    def __init__(self, ref: str, nodes: list[str], subckt: str,
+                 footprint: str = ""):
+        if not ref:
+            raise ValueError("XSubckt: missing ref designator")
+        if not nodes:
+            raise ValueError(f"XSubckt {ref}: nodes list is empty")
+        if not subckt:
+            raise ValueError(f"XSubckt {ref}: subckt name is required")
+        super().__init__(ref=ref, value=subckt, footprint=footprint)
+        self.subckt = subckt
+        # Positional pins named "1".."N"; order == .SUBCKT terminal order.
+        self.pin_names = tuple(str(i + 1) for i in range(len(nodes)))
+        self.connections = {name: net for name, net in zip(self.pin_names, nodes)}
+
+    def validate(self) -> None:
+        if not self.ref:
+            raise ValueError("XSubckt: missing ref designator")
+        if not self.subckt:
+            raise ValueError(f"XSubckt {self.ref}: missing subckt name")
+        missing = [p for p in self.pin_names if not self.connections.get(p)]
+        if missing:
+            raise ValueError(f"XSubckt {self.ref}: pins {missing} unconnected")
+
+    def _x_ref(self) -> str:
+        """SPICE subckt-call ref — guaranteed to start with 'X'."""
+        return self.ref if self.ref[:1].upper() == "X" else f"X{self.ref}"
+
+    def spice_line(self) -> str:
+        nets = " ".join(self.connections[p] for p in self.pin_names)
+        return f"{self._x_ref()} {nets} {self.subckt}"
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["subckt"] = self.subckt
+        return d
+
+
 # Public registry for from_dict reconstruction + extensibility checks.
 ALL_PARTS: dict[str, type[Part]] = {
     cls.kind: cls
-    for cls in (R, C, L, D, LED, NPN, PNP, V, I)
+    for cls in (R, C, L, D, LED, NPN, PNP, V, I, XSubckt)
 }
 
 
@@ -408,6 +476,10 @@ def part_from_dict(d: dict) -> Part:
     p.library   = d.get("library", "")
     p.footprint = d.get("footprint", "")
     p.connections = dict(d.get("pins", {}))
+    if cls is XSubckt:
+        p.subckt = d.get("subckt", d.get("value", ""))
+        # pin_names follow the saved pin dict's insertion order ("1".."N").
+        p.pin_names = tuple(d.get("pins", {}).keys())
     if cls is V or cls is I:
         # Recover dc/ac from the value field
         v = p.value

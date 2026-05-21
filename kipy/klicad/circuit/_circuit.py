@@ -17,6 +17,7 @@ from typing import Literal
 
 from ._part import Part, part_from_dict
 from ._analyses import Analysis, analysis_from_dict
+from ._model import ModelCard
 
 
 # Net kind: 'signal' is the default; 'power' / 'ground' are auto-detected by
@@ -73,6 +74,8 @@ class Circuit:
     analyses: list[Analysis] = field(default_factory=list)
     # Search path for SPICE model libraries (.lib files).  Earlier entries win.
     model_lib_paths: list[str] = field(default_factory=list)
+    # Inline SPICE `.model` cards, emitted ahead of the element lines.
+    models: list[ModelCard] = field(default_factory=list)
     # Strictness knobs (mostly for testing or generated code).
     strict: bool = True            # warnings become errors when True
     _warnings: list[str] = field(default_factory=list, init=False)
@@ -148,8 +151,39 @@ class Circuit:
     # ---- model lib search paths ----
 
     def add_model_lib(self, path: str | Path) -> "Circuit":
-        """Add a SPICE .lib file to the search path.  Earlier entries win."""
+        """Add a SPICE .lib file to the search path.  Earlier entries win.
+
+        The deck emitter `.include`s every configured lib.  Use this for
+        files holding `.model` cards or `.SUBCKT` definitions (vendor
+        TVS / Zener / op-amp models).  Instantiate a `.SUBCKT` with an
+        XSubckt part.
+        """
         self.model_lib_paths.append(str(path))
+        return self
+
+    def add_model(self, name: str, kind: str, **params: object) -> "Circuit":
+        """Define an inline SPICE `.model` card.
+
+        name:   model name; parts reference it via model=.
+        kind:   SPICE device type — D, NPN, PNP, NJF, NMOS, RES, ...
+        params: device parameters as keyword args, stringified on emit:
+                c.add_model("DZ15", "D", BV=15, RS=2, IBV="5m", CJO="200p")
+
+        Emitted by to_spice_deck() as a `.model` line between the
+        `.include` directives and the element lines.  For `.SUBCKT`-based
+        vendor models, use add_model_lib() + an XSubckt part instead.
+        """
+        if not name:
+            raise ValueError("add_model: model name is required")
+        if not kind:
+            raise ValueError(f"add_model({name!r}): device kind is required")
+        if any(m.name == name for m in self.models):
+            raise ValueError(f"add_model: model {name!r} already defined")
+        self.models.append(ModelCard(
+            name=name,
+            kind=kind,
+            params={k: str(v) for k, v in params.items()},
+        ))
         return self
 
     # ---- final pre-emit validation ----
@@ -185,9 +219,18 @@ class Circuit:
         # files here; the SPICE deck just .includes them and lets ngspice
         # complain at simulation time if missing).  Just check the path
         # exists if any model lib paths were configured.
-        for path in self.model_lib_paths:
+        lib_paths = list(self.model_lib_paths)
+        lib_paths += [p.library for p in self.parts if p.library]
+        for path in lib_paths:
             if not Path(path).exists():
                 issues.append(f"model_lib path {path!r} does not exist on disk")
+
+        # Duplicate inline model names would make ngspice pick one arbitrarily.
+        seen_models: set[str] = set()
+        for m in self.models:
+            if m.name in seen_models:
+                errors.append(f"duplicate inline .model name {m.name!r}")
+            seen_models.add(m.name)
 
         self._warnings = issues
         if errors:
@@ -206,6 +249,7 @@ class Circuit:
             "initial_conditions": dict(self.initial_conditions),
             "analyses": [a.to_dict() for a in self.analyses],
             "model_lib_paths": list(self.model_lib_paths),
+            "models": [m.to_dict() for m in self.models],
         }
 
     @classmethod
@@ -219,6 +263,8 @@ class Circuit:
             desc=d.get("desc", ""),
         )
         c.model_lib_paths = list(d.get("model_lib_paths", []))
+        for md in d.get("models", []):
+            c.models.append(ModelCard.from_dict(md))
         # Nets first so add() doesn't trample explicit declarations
         for name, meta in d.get("nets", {}).items():
             c.net(name, meta.get("kind", "signal"))

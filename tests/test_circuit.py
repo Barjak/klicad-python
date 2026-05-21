@@ -18,7 +18,8 @@ import pytest
 
 from kipy.klicad.circuit import (
     Circuit,
-    R, C, NPN, LED, V,
+    R, C, NPN, LED, V, D, L, XSubckt,
+    ModelCard,
     Tran,
     STANDARD_MODEL_LIB,
 )
@@ -127,6 +128,93 @@ def test_spice_deck_well_formed():
         if not line:
             continue
         assert "GND" not in line, f"unrewritten GND in element line: {line!r}"
+
+
+# ---- inline .model cards + .SUBCKT instantiation -----------------------
+
+def _flyback_circuit() -> Circuit:
+    """Solenoid + freewheel diode using an inline .model card."""
+    c = Circuit(name="Flyback", desc="solenoid with inline-modelled clamp")
+    c.add_model("DFW", "D", IS="1e-9", N=1.7, RS=0.02, BV=600)
+    c.add(V("V1", "RAIL", "GND", dc=24))
+    c.add(L("L1", "RAIL", "SW", value="50m"))
+    c.add(R("R1", "SW", "GND", value="5"))            # crude switch stand-in
+    c.add(D("D1", a="SW", k="RAIL", model="DFW"))
+    c.analysis(Tran(step="1us", stop="5ms"))
+    return c
+
+
+def test_inline_model_card_emitted():
+    c = _flyback_circuit()
+    deck = c.to_spice_deck()
+    lines = deck.splitlines()
+    # .model line present, well-formed, ahead of the element lines.
+    model_idx = next(i for i, ln in enumerate(lines)
+                     if ln.startswith(".model DFW D ("))
+    assert "BV=600" in lines[model_idx] and "RS=0.02" in lines[model_idx]
+    first_elem = next(i for i, ln in enumerate(lines) if ln.startswith("D1 "))
+    assert model_idx < first_elem, "the .model card must precede the element lines"
+    # The diode element references the model by name.
+    assert any(ln.startswith("D1 ") and ln.endswith("DFW") for ln in lines)
+
+
+def test_add_model_rejects_duplicate():
+    c = Circuit(name="dup")
+    c.add_model("DZ", "D", BV=15)
+    with pytest.raises(ValueError, match="already defined"):
+        c.add_model("DZ", "D", BV=20)
+
+
+def test_xsubckt_emitted_as_x_element():
+    c = Circuit(name="TVS clamp")
+    c.add_model_lib(STANDARD_MODEL_LIB)        # any existing file, just for the .include
+    c.add(V("V1", "RAIL", "GND", dc=24))
+    c.add(L("L1", "RAIL", "SW", value="50m"))
+    c.add(R("R1", "SW", "GND", value="5"))
+    # KiCad-style ref 'D1' -> SPICE subckt call 'XD1'.
+    c.add(XSubckt("D1", ["SW", "RAIL"], subckt="SMAJ24CA"))
+    deck = c.to_spice_deck()
+    lines = deck.splitlines()
+    assert any(ln == "XD1 SW RAIL SMAJ24CA" for ln in lines), deck
+    # No bare 'D1 ...' diode line — the subckt must not be emitted as a diode.
+    assert not any(ln.startswith("D1 ") for ln in lines)
+
+
+def test_xsubckt_ground_rewrite():
+    """Ground nets inside an X line are still rewritten to 0."""
+    c = Circuit(name="g")
+    c.add(V("V1", "A", "GND", dc=5))
+    c.add(XSubckt("U1", ["A", "GND"], subckt="SOMECKT"))
+    deck = c.to_spice_deck()
+    assert "XU1 A 0 SOMECKT" in deck
+
+
+def test_part_library_field_included():
+    """A per-part .library file gets its own .include line."""
+    c = Circuit(name="L")
+    c.add(V("V1", "A", "GND", dc=5))
+    d = D("D1", a="A", k="GND", model="CUSTOM")
+    d.library = STANDARD_MODEL_LIB
+    c.add(d)
+    deck = c.to_spice_deck()
+    assert f".include {STANDARD_MODEL_LIB}" in deck
+
+
+def test_roundtrip_with_models_and_xsubckt():
+    c1 = _flyback_circuit()
+    c1.add_model_lib("/tmp/some_vendor.lib")
+    c1.add(XSubckt("D2", ["SW", "RAIL"], subckt="SMAJ30CA"))
+    c2 = Circuit.from_dict(c1.to_dict())
+    assert c1 == c2
+    assert c2.to_dict() == c1.to_dict()           # idempotent
+    # The reconstructed XSubckt still emits a correct X line.
+    assert "XD2 SW RAIL SMAJ30CA" in c2.to_spice_deck()
+
+
+def test_modelcard_roundtrip():
+    m = ModelCard("DZ", "D", {"BV": "15", "RS": "2"})
+    assert ModelCard.from_dict(m.to_dict()) == m
+    assert m.spice_line() == ".model DZ D (BV=15 RS=2)"
 
 
 # ---- live ngspice run (requires KliCAD instance) -----------------------

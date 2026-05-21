@@ -3,8 +3,9 @@
 Layout of the emitted deck:
 
     * <circuit.name>                        title line (ngspice convention)
-    .include <model_lib_path>               one per configured lib
-    <element lines: R/C/L/D/Q/V/I>          one per Part
+    .include <model_lib_path>               one per configured lib + part lib
+    .model <name> <kind> (params)           one per inline ModelCard
+    <element lines: R/C/L/D/Q/V/I/X>        one per Part
     .ic V(net1)=v1 V(net2)=v2 ...           if any initial conditions
     .control                                wraps the runnable analyses
         tran 1us 200ms uic
@@ -82,9 +83,18 @@ def to_spice_deck(c: "Circuit") -> str:
     if c.desc:
         lines.append(f"* {c.desc}")
 
-    # Model library includes
-    for path in c.model_lib_paths:
+    # Model library includes — circuit-level libs first, then any per-part
+    # .library files, deduped while preserving first-seen order.
+    includes: list[str] = list(c.model_lib_paths)
+    for p in c.parts:
+        if p.library and p.library not in includes:
+            includes.append(p.library)
+    for path in includes:
         lines.append(f".include {path}")
+
+    # Inline .model cards
+    for m in c.models:
+        lines.append(m.spice_line())
 
     # Element lines, in insertion order so the deck is human-diffable
     if c.parts:
