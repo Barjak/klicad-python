@@ -318,18 +318,24 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
     """Place every Part as a SCH_SYMBOL.  Returns ref -> kiid mapping."""
     positions = _layout_positions(c, engine=layout)
     placed: dict[str, str] = {}
-    needs_lib = {"NPN", "PNP", "D", "LED"}  # part kinds whose models live in the .lib
+    # Part kinds whose model name + library path go into Sim.Name / Sim.Library
+    # so KiCad's SPICE netlist exporter can find the .MODEL card or .SUBCKT.
+    # XSubckts are included whenever they carry a per-instance kicad_lib_id.
+    needs_lib = {"NPN", "PNP", "D", "LED", "X"}
 
-    # XSubckt has no fixed KiCad symbol — schematic placement isn't wired
-    # up yet.  Fail early and clearly rather than passing an empty lib_id
-    # to add_symbol() and getting a cryptic KiCad error.
-    subckt_refs = [p.ref for p in c.parts if p.kind == "X"]
-    if subckt_refs:
+    # XSubckt parts without an explicit kicad_lib_id can't be placed —
+    # the lookup table has nothing to map them to.  Fail early and clearly.
+    bare_subckts = [p.ref for p in c.parts
+                    if p.kind == "X" and not p.kicad_lib_id]
+    if bare_subckts:
         raise NotImplementedError(
-            f"to_schematic() does not yet support XSubckt parts {subckt_refs}; "
-            f"they have no fixed KiCad symbol.  Use to_spice_deck() for "
-            f"subcircuit-based models, or model the device with an inline "
-            f".model card (Circuit.add_model) for now."
+            f"to_schematic(): XSubckt parts {bare_subckts} have no KiCad "
+            f"symbol binding.  Pass kicad_lib_id= and kicad_pin_map= when "
+            f"constructing each XSubckt, e.g.:\n"
+            f"    XSubckt('Q1', ['DRAIN', 'GATE', 'SOURCE'], subckt='DO5T10BA',\n"
+            f"            kicad_lib_id='Device:Q_NMOS_GDS',\n"
+            f"            kicad_pin_map={{'1':'2','2':'1','3':'3'}})\n"
+            f"or use to_spice_deck() if you only need the SPICE side."
         )
 
     for p in c.parts:
@@ -366,7 +372,30 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
             # KiCad 7-era convention).  Without Sim.Name the netlist
             # generator emits '<ref>.unknown' as the model name and the
             # deck fails to simulate.  Set Sim.Name to the model name.
-            if p.model:
+            #
+            # XSubckt: model identity lives in p.subckt (the .SUBCKT name);
+            # additionally tag Sim.Type='SUBCKT' so KiCad treats the symbol
+            # as a subcircuit call (X-element) rather than trying to
+            # interpret it as a built-in primitive.
+            if p.kind == "X":
+                # KiCad's Sim.Pins format is "kicad_pin=spice_terminal_idx"
+                # — tells the netlist exporter which KiCad symbol pin
+                # corresponds to which positional .SUBCKT terminal, so the
+                # generated X-line argument order matches the .SUBCKT
+                # definition.  We have kicad_pin_map as spice_pos → kicad_pin,
+                # so invert it for the Sim.Pins field.
+                sim_pins = ",".join(
+                    f"{kn}={sp}" for sp, kn in sorted(
+                        p.kicad_pin_map.items(),
+                        key=lambda kv: int(kv[1]) if kv[1].isdigit() else 0,
+                    )
+                )
+                snippet += (
+                    f"ss.set_symbol_field(kiid, 'Sim.Name', {p.subckt!r})\n"
+                    f"ss.set_symbol_field(kiid, 'Sim.Type', 'SUBCKT')\n"
+                    f"ss.set_symbol_field(kiid, 'Sim.Pins', {sim_pins!r})\n"
+                )
+            elif p.model:
                 snippet += (
                     f"ss.set_symbol_field(kiid, 'Sim.Name', {p.model!r})\n"
                 )

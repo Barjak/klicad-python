@@ -413,12 +413,31 @@ class XSubckt(Part):
     """
     kind          = "X"
     spice_letter  = "X"
-    kicad_lib_id  = ""          # no fixed symbol; to_schematic unsupported
+    # NB: per-instance kicad_lib_id / kicad_pin_map override the class-level
+    # empty defaults — XSubckts can adopt any KiCad symbol whose pin set
+    # the caller maps to the subckt's positional terminals.
+    kicad_lib_id  = ""
 
     subckt: str = ""
 
     def __init__(self, ref: str, nodes: list[str], subckt: str,
-                 footprint: str = ""):
+                 footprint: str = "",
+                 kicad_lib_id: str = "",
+                 kicad_pin_map: dict[str, str] | None = None):
+        """SPICE subcircuit instance.
+
+        ref:           designator (e.g. 'Q1', 'U3'); 'X' is prepended in SPICE.
+        nodes:         positional list of nets, in .SUBCKT terminal order.
+        subckt:        name of the .SUBCKT defined in an included .lib.
+        footprint:     optional KiCad footprint hint.
+        kicad_lib_id:  KiCad library symbol id (e.g. 'Device:Q_NMOS_GDS').
+                       If provided, to_schematic() will place this symbol;
+                       otherwise schematic placement raises.
+        kicad_pin_map: maps SPICE-positional pin names ('1'..'N') to KiCad
+                       symbol pin numbers (e.g. {'1':'2','2':'1','3':'3'}
+                       for a DGS-order subckt going onto a GDS-labeled
+                       KiCad symbol).  Required when kicad_lib_id is set.
+        """
         if not ref:
             raise ValueError("XSubckt: missing ref designator")
         if not nodes:
@@ -431,6 +450,27 @@ class XSubckt(Part):
         self.pin_names = tuple(str(i + 1) for i in range(len(nodes)))
         self.connections = {name: net for name, net in zip(self.pin_names, nodes)}
 
+        if kicad_lib_id:
+            if not kicad_pin_map:
+                raise ValueError(
+                    f"XSubckt {ref}: kicad_lib_id={kicad_lib_id!r} requires "
+                    f"kicad_pin_map (SPICE position '1'..'{len(nodes)}' → "
+                    f"KiCad pin number); pass kicad_pin_map={{'1':'1',...}}"
+                )
+            unmapped = [p for p in self.pin_names if p not in kicad_pin_map]
+            if unmapped:
+                raise ValueError(
+                    f"XSubckt {ref}: kicad_pin_map missing entries for "
+                    f"SPICE positions {unmapped}"
+                )
+            self.kicad_lib_id = kicad_lib_id
+            self.kicad_pin_map = dict(kicad_pin_map)
+        elif kicad_pin_map:
+            raise ValueError(
+                f"XSubckt {ref}: kicad_pin_map without kicad_lib_id — pass "
+                f"both or neither (schematic placement requires both)"
+            )
+
     def validate(self) -> None:
         if not self.ref:
             raise ValueError("XSubckt: missing ref designator")
@@ -439,6 +479,15 @@ class XSubckt(Part):
         missing = [p for p in self.pin_names if not self.connections.get(p)]
         if missing:
             raise ValueError(f"XSubckt {self.ref}: pins {missing} unconnected")
+        # If a KiCad symbol was declared, every SPICE pin needs a kicad pin.
+        if self.kicad_lib_id:
+            unmapped = [p for p in self.pin_names
+                        if p not in getattr(self, "kicad_pin_map", {})]
+            if unmapped:
+                raise ValueError(
+                    f"XSubckt {self.ref}: kicad_pin_map missing entries "
+                    f"for SPICE positions {unmapped}"
+                )
 
     def _x_ref(self) -> str:
         """SPICE subckt-call ref — guaranteed to start with 'X'."""
@@ -451,6 +500,9 @@ class XSubckt(Part):
     def to_dict(self) -> dict:
         d = super().to_dict()
         d["subckt"] = self.subckt
+        if self.kicad_lib_id:
+            d["kicad_lib_id"] = self.kicad_lib_id
+            d["kicad_pin_map"] = dict(getattr(self, "kicad_pin_map", {}))
         return d
 
 
@@ -480,6 +532,10 @@ def part_from_dict(d: dict) -> Part:
         p.subckt = d.get("subckt", d.get("value", ""))
         # pin_names follow the saved pin dict's insertion order ("1".."N").
         p.pin_names = tuple(d.get("pins", {}).keys())
+        # Optional KiCad-symbol binding survives the round-trip.
+        if d.get("kicad_lib_id"):
+            p.kicad_lib_id = d["kicad_lib_id"]
+            p.kicad_pin_map = dict(d.get("kicad_pin_map", {}))
     if cls is V or cls is I:
         # Recover dc/ac from the value field
         v = p.value

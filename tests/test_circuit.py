@@ -14,6 +14,8 @@ Requires a running KliCAD instance for (4) and (5); the other tests are pure.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from kipy.klicad.circuit import (
@@ -215,6 +217,129 @@ def test_modelcard_roundtrip():
     m = ModelCard("DZ", "D", {"BV": "15", "RS": "2"})
     assert ModelCard.from_dict(m.to_dict()) == m
     assert m.spice_line() == ".model DZ D (BV=15 RS=2)"
+
+
+# ---- XSubckt KiCad-symbol binding (per-instance) -----------------------
+
+def test_xsubckt_schematic_binding_optional():
+    """XSubckt still works without a KiCad-symbol binding (SPICE-only mode)."""
+    x = XSubckt("D1", ["A", "K"], subckt="SMF54A")
+    assert x.kicad_lib_id == ""
+    assert not hasattr(x, "kicad_pin_map") or not x.kicad_pin_map
+    assert x.spice_line() == "XD1 A K SMF54A"
+
+
+def test_xsubckt_schematic_binding_accepted():
+    """XSubckt with kicad_lib_id + kicad_pin_map stores the binding."""
+    x = XSubckt(
+        "Q1", ["D", "G", "S"], subckt="DO5T10BA",
+        kicad_lib_id="Device:Q_NMOS",
+        kicad_pin_map={"1": "D", "2": "G", "3": "S"},
+    )
+    assert x.kicad_lib_id == "Device:Q_NMOS"
+    assert x.kicad_pin_map == {"1": "D", "2": "G", "3": "S"}
+    assert x.spice_line() == "XQ1 D G S DO5T10BA"
+
+
+def test_xsubckt_pinmap_without_libid_rejected():
+    with pytest.raises(ValueError, match="kicad_pin_map without kicad_lib_id"):
+        XSubckt("D1", ["A", "K"], subckt="SMF54A",
+                kicad_pin_map={"1": "2", "2": "1"})
+
+
+def test_xsubckt_libid_without_pinmap_rejected():
+    with pytest.raises(ValueError, match="requires kicad_pin_map"):
+        XSubckt("Q1", ["D", "G", "S"], subckt="DO5T10BA",
+                kicad_lib_id="Device:Q_NMOS")
+
+
+def test_xsubckt_pinmap_incomplete_rejected():
+    with pytest.raises(ValueError, match="missing entries for"):
+        XSubckt("Q1", ["D", "G", "S"], subckt="DO5T10BA",
+                kicad_lib_id="Device:Q_NMOS",
+                kicad_pin_map={"1": "D", "2": "G"})  # missing "3"
+
+
+def test_xsubckt_schematic_binding_roundtrip():
+    """to_dict/from_dict preserves kicad_lib_id + kicad_pin_map."""
+    c1 = Circuit(name="t", desc="")
+    c1.add(XSubckt(
+        "Q1", ["D", "G", "S"], subckt="DO5T10BA",
+        kicad_lib_id="Device:Q_NMOS",
+        kicad_pin_map={"1": "D", "2": "G", "3": "S"},
+    ))
+    c2 = Circuit.from_dict(c1.to_dict())
+    q = next(p for p in c2.parts if p.ref == "Q1")
+    assert q.kicad_lib_id == "Device:Q_NMOS"
+    assert q.kicad_pin_map == {"1": "D", "2": "G", "3": "S"}
+    assert q.spice_line() == "XQ1 D G S DO5T10BA"
+
+
+def test_to_schematic_rejects_bare_xsubckt():
+    """Without kicad_lib_id, schematic placement raises NotImplementedError
+    (the runtime path that prior code already exercised, plus a clearer
+    message)."""
+    from kipy.klicad.circuit._kicad_sch import _place_parts
+    c = Circuit(name="t", desc="")
+    c.add(XSubckt("U1", ["A", "B"], subckt="UNDEF"))
+    # Don't need a live KiCad to hit the early raise.
+    with pytest.raises(NotImplementedError, match="no KiCad symbol binding"):
+        _place_parts(c, kicad=None, models_lib_path=Path("/tmp/x.lib"))
+
+
+def test_to_schematic_snippet_for_xsubckt(monkeypatch, tmp_path):
+    """With a kicad_lib_id + kicad_pin_map, _place_parts generates the
+    expected schematic-authoring snippet for the XSubckt.
+
+    Uses a FakeKiCad that captures every run_python call instead of
+    sending it to a live KliCAD; that lets us inspect the generated
+    code without requiring a running session.
+    """
+    from kipy.klicad.circuit._kicad_sch import _place_parts
+
+    c = Circuit(name="t", desc="")
+    c.add(XSubckt(
+        "Q1", ["DRAIN", "GATE", "SOURCE"], subckt="DO5T10BA",
+        kicad_lib_id="Device:Q_NMOS",
+        kicad_pin_map={"1": "D", "2": "G", "3": "S"},
+    ))
+    c.add(XSubckt(
+        "D1", ["GND", "DRAIN"], subckt="SMF54A",
+        kicad_lib_id="Device:D",
+        kicad_pin_map={"1": "2", "2": "1"},
+    ))
+
+    class FakeKiCad:
+        def __init__(self):
+            self.calls = []
+            self.next_kiid = iter(range(1, 100))
+
+        def run_python(self, snippet: str):
+            self.calls.append(snippet)
+            kiid = next(self.next_kiid)
+            class R:
+                ok = True
+                result_repr = repr(f"kiid_{kiid}")
+            return R()
+
+    fake = FakeKiCad()
+    models_lib = tmp_path / "models.lib"
+    models_lib.write_text("")
+
+    placed = _place_parts(c, kicad=fake, models_lib_path=models_lib)
+
+    assert set(placed) == {"Q1", "D1"}
+    # Each part snippet contains the right add_symbol + Sim.Name + Sim.Type
+    snippets = "\n".join(fake.calls)
+    assert "'Device:Q_NMOS'" in snippets
+    assert "'Q1'" in snippets
+    assert "'DO5T10BA'" in snippets        # Sim.Name = subckt name
+    assert "'SUBCKT'" in snippets           # Sim.Type
+    assert "'Device:D'" in snippets
+    assert "'SMF54A'" in snippets
+    # Sim.Pins encodes the kicad_pin → spice_position mapping
+    assert "D=1" in snippets and "G=2" in snippets and "S=3" in snippets
+    assert "2=1" in snippets and "1=2" in snippets  # D1 reversed-pin TVS
 
 
 # ---- live ngspice run (requires KliCAD instance) -----------------------
