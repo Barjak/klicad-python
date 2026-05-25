@@ -289,6 +289,41 @@ class Circuit:
                 errors.append(f"duplicate inline .model name {m.name!r}")
             seen_models.add(m.name)
 
+        # .SUBCKT registry — parse the configured .lib files and verify each
+        # XSubckt's subckt= name + node count matches a real .SUBCKT
+        # definition.  Catches the most common late-binding errors
+        # ("subcircuit not found", "too few terminals") at validate-time
+        # instead of at ngspice runtime.
+        x_parts = [p for p in self.parts if getattr(p, "kind", "") == "X"]
+        if x_parts:
+            from ._subckt_lib import parse_subckt_lib
+            registry: dict[str, int] = {}
+            for path in lib_paths:
+                # parse_subckt_lib() returns {} for missing files (already
+                # warned above) so we can call it unconditionally.
+                registry.update(parse_subckt_lib(path))
+            for x in x_parts:
+                name = getattr(x, "subckt", "")
+                if not name:
+                    continue
+                if name not in registry:
+                    # Warn (not error) — the subckt might come from a
+                    # not-yet-parseable lib, a verilog-A model, or some
+                    # other source we don't read.
+                    issues.append(
+                        f"XSubckt {x.ref!r} references subckt {name!r}, but "
+                        f"no .SUBCKT {name} was found in any configured "
+                        f"model_lib"
+                    )
+                    continue
+                expected = registry[name]
+                actual = len(x.pin_names)
+                if expected != actual:
+                    errors.append(
+                        f"XSubckt {x.ref!r}: .SUBCKT {name} has {expected} "
+                        f"terminal(s) but {actual} node(s) were provided"
+                    )
+
         self._warnings = issues
         if errors:
             raise ValueError("circuit validation failed:\n  - " + "\n  - ".join(errors))
@@ -357,9 +392,9 @@ class Circuit:
 
     # ---- conversion stubs (delegated to other modules) ----
 
-    def to_spice_deck(self) -> str:
+    def to_spice_deck(self, *, self_running: bool = True) -> str:
         from ._spice import to_spice_deck
-        return to_spice_deck(self)
+        return to_spice_deck(self, self_running=self_running)
 
     def run_tran(self, step: str | None = None, stop: str | None = None,
                  *, uic: bool | None = None, ng=None) -> dict[str, list[float]]:

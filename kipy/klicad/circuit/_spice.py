@@ -66,11 +66,18 @@ def _rewrite_grounds_in_part(p) -> str:
     return " ".join([head, *rewritten, *tail])
 
 
-def to_spice_deck(c: "Circuit") -> str:
+def to_spice_deck(c: "Circuit", *, self_running: bool = True) -> str:
     """Render Circuit `c` as a SPICE deck string.
 
     Calls c.validate_all() first; warnings go to c._warnings.  Raises on
     integrity errors (referenced undeclared models in ic(), etc.).
+
+    self_running: when True (default), wrap analyses in a `.control / .endc`
+        block so the deck auto-runs on `source()`.  When False, omit the
+        `.control` block entirely — useful when a runner drives `tran`
+        explicitly via `exec_command()` (sourcing a self-running deck and
+        then running `tran` again causes a double-tran error).
+        `Circuit.run_tran()` uses self_running=False.
     """
     c.validate_all()
 
@@ -111,15 +118,18 @@ def to_spice_deck(c: "Circuit") -> str:
         )
         lines.append(f".ic {ic_parts}")
 
-    # Analyses — wrapped in .control so they actually execute
-    runnable = [a for a in c.analyses if hasattr(a, "spice_lines")]
-    if runnable:
-        lines.append("")
-        lines.append(".control")
-        for a in runnable:
-            for stmt in a.spice_lines():
-                lines.append(stmt)
-        lines.append(".endc")
+    # Analyses — wrapped in .control so they actually execute.  Caller can
+    # opt out via self_running=False when an external runner will drive
+    # the analyses itself.
+    if self_running:
+        runnable = [a for a in c.analyses if hasattr(a, "spice_lines")]
+        if runnable:
+            lines.append("")
+            lines.append(".control")
+            for a in runnable:
+                for stmt in a.spice_lines():
+                    lines.append(stmt)
+            lines.append(".endc")
 
     lines.append(".end")
     lines.append("")  # trailing newline

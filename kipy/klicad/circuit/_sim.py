@@ -6,7 +6,8 @@ to re-write them:
   * NgSpiceShared backs a singleton libngspice; state from a prior `tran`
     leaks into the next iteration unless plots are destroyed first.
   * `tran` inside `.control` does not always auto-run on `.source()`, so
-    we strip the .control block and issue `tran` explicitly.
+    we generate a non-self-running deck (via `to_spice_deck(self_running=
+    False)`) and issue `tran` explicitly.
   * PySpice raises NgSpiceCommandError on *any* non-empty stderr output —
     including ngspice's harmless "Using SPARSE 1.3 ..." informational
     line — so we catch the exception and check for the plot anyway.
@@ -46,29 +47,6 @@ def _make_spy_class():
             return 0
 
     return Spy
-
-
-def _strip_control_block(deck: str) -> str:
-    """Return `deck` with the `.control ... .endc` block removed.
-
-    `run_tran()` issues the tran command itself; leaving the .control in
-    place means the simulator either runs tran twice or, on some ngspice
-    builds, doesn't run it at all.  Cheaper to strip.
-    """
-    out = []
-    skip = False
-    for line in deck.splitlines():
-        s = line.strip().lower()
-        if s.startswith(".control"):
-            skip = True
-            continue
-        if s.startswith(".endc"):
-            skip = False
-            continue
-        if skip:
-            continue
-        out.append(line)
-    return "\n".join(out) + "\n"
 
 
 def run_tran(circuit: "Circuit",
@@ -121,7 +99,9 @@ def run_tran(circuit: "Circuit",
             "run_tran() requires PySpice.  Install with: pip install PySpice"
         ) from e
 
-    deck = _strip_control_block(circuit.to_spice_deck())
+    # Build a non-self-running deck so the explicit `tran` below isn't
+    # racing or duplicating a `.control / .endc` block in the deck.
+    deck = circuit.to_spice_deck(self_running=False)
 
     own_ng = ng is None
     if own_ng:
