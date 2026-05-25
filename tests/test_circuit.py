@@ -342,6 +342,147 @@ def test_to_schematic_snippet_for_xsubckt(monkeypatch, tmp_path):
     assert "2=1" in snippets and "1=2" in snippets  # D1 reversed-pin TVS
 
 
+# ---- c.tran property + .tran emitted from to_spice_deck() --------------
+
+def test_c_tran_setter_appends_to_analyses():
+    c = Circuit("t")
+    c.add(R("R1", "A", "B", "1k"))
+    c.add(R("R2", "B", "0", "1k"))
+    assert c.tran is None
+    c.tran = Tran(step="1u", stop="10m")
+    assert c.tran is not None
+    assert c.tran.step == "1u"
+    assert c.tran.stop == "10m"
+    # And the analysis must end up in the deck
+    deck = c.to_spice_deck()
+    assert ".control" in deck
+    assert "tran 1u 10m" in deck.lower()
+
+
+def test_c_tran_setter_replaces_prior_tran():
+    """Assigning c.tran a second time strips the first one."""
+    c = Circuit("t")
+    c.add(R("R1", "A", "0", "1k"))
+    c.tran = Tran(step="1u", stop="10m")
+    c.tran = Tran(step="5u", stop="20m")
+    trans = [a for a in c.analyses if isinstance(a, Tran)]
+    assert len(trans) == 1
+    assert trans[0].stop == "20m"
+
+
+def test_c_tran_set_to_none_clears():
+    c = Circuit("t")
+    c.add(R("R1", "A", "0", "1k"))
+    c.tran = Tran(step="1u", stop="10m")
+    c.tran = None
+    assert c.tran is None
+    assert not any(isinstance(a, Tran) for a in c.analyses)
+
+
+def test_c_tran_type_check():
+    c = Circuit("t")
+    with pytest.raises(TypeError):
+        c.tran = "not a Tran"
+
+
+# ---- expect_external suppresses orphan-net warning ---------------------
+
+def test_expect_external_suppresses_warning():
+    c = Circuit("t", strict=False)
+    c.net("BOUNDARY_OUT", expect_external=True)
+    c.add(R("R1", "BOUNDARY_OUT", "INTERNAL", "1k"))
+    c.add(R("R2", "INTERNAL", "GND", "1k"))
+    warnings = c.validate_all()
+    # INTERNAL is used twice (R1, R2) — no warn. GND is used once but it's
+    # auto-detected as ground; the typo guard treats it the same as other
+    # signals.  BOUNDARY_OUT is used once but is marked external.
+    assert not any("BOUNDARY_OUT" in w for w in warnings), warnings
+
+
+def test_expect_external_does_not_mask_unrelated_orphans():
+    c = Circuit("t", strict=False)
+    c.net("BOUNDARY_OUT", expect_external=True)
+    c.add(R("R1", "BOUNDARY_OUT", "INTERNAL", "1k"))
+    c.add(R("R2", "INTERNAL", "ORPHAN", "1k"))  # ORPHAN truly orphan
+    warnings = c.validate_all()
+    assert any("ORPHAN" in w for w in warnings), warnings
+
+
+def test_expect_external_strict_mode():
+    """In strict=True, an expect_external net should not error out."""
+    c = Circuit("t", strict=True)
+    c.net("STIMULUS", expect_external=True)
+    c.add(R("R1", "STIMULUS", "B", "1k"))
+    c.add(R("R2", "B", "GND", "1k"))
+    # validate_all() raises only on errors, not warnings; with the
+    # expect_external set we expect no warning for STIMULUS at all.
+    warnings = c.validate_all()
+    assert not any("STIMULUS" in w for w in warnings), warnings
+
+
+def test_expect_external_roundtrips():
+    c1 = Circuit("t")
+    c1.net("X", expect_external=True)
+    c1.add(R("R1", "X", "0", "1k"))
+    d = c1.to_dict()
+    c2 = Circuit.from_dict(d)
+    assert c2.nets["X"].expect_external is True
+
+
+def test_expect_external_default_not_in_dict():
+    """expect_external=False is the default; don't bloat the JSON."""
+    c = Circuit("t")
+    c.net("Y")
+    d = c.to_dict()
+    assert "expect_external" not in d["nets"]["Y"]
+
+
+# ---- run_tran helper (requires PySpice + ngspice) ----------------------
+
+@pytest.fixture
+def _pyspice_available():
+    pyspice = pytest.importorskip("PySpice.Spice.NgSpice.Shared")
+    return pyspice
+
+
+def test_run_tran_rc_steady_state(_pyspice_available):
+    """RC circuit charges to its driving voltage within the time horizon."""
+    c = Circuit("rc")
+    c.add(V("V1", "VIN", "0", dc=5))
+    c.add(R("R1", "VIN", "OUT", "10k"))
+    c.add(C("C1", "OUT", "0", "10n"))  # tau = 100us
+    c.ic(OUT=0)
+    c.tran = Tran(step="1u", stop="2m", uic=True)
+
+    result = c.run_tran()
+    assert "time" in result
+    # The OUT node should be reported as v(out) or 'out'.
+    out_key = next((k for k in result if k.lower() in ("v(out)", "out")), None)
+    assert out_key is not None, list(result.keys())
+    assert result[out_key][-1] == pytest.approx(5.0, abs=0.05)
+
+
+def test_run_tran_overrides_step_stop(_pyspice_available):
+    """Explicit step/stop wins over c.tran."""
+    c = Circuit("rc")
+    c.add(V("V1", "VIN", "0", dc=5))
+    c.add(R("R1", "VIN", "OUT", "10k"))
+    c.add(C("C1", "OUT", "0", "10n"))
+    c.tran = Tran(step="1u", stop="100u", uic=True)
+    # The c.tran horizon is too short to reach 5V; override.
+    result = c.run_tran(step="1u", stop="2m", uic=True)
+    out_key = next((k for k in result if k.lower() in ("v(out)", "out")), None)
+    assert result[out_key][-1] == pytest.approx(5.0, abs=0.05)
+
+
+def test_run_tran_requires_tran(_pyspice_available):
+    c = Circuit("rc")
+    c.add(R("R1", "A", "0", "1k"))
+    c.add(R("R2", "A", "B", "1k"))
+    with pytest.raises(ValueError):
+        c.run_tran()
+
+
 # ---- live ngspice run (requires KliCAD instance) -----------------------
 
 def test_oscillator_actually_oscillates(kicad):

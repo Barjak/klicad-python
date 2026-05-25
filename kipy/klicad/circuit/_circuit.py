@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from ._part import Part, part_from_dict
-from ._analyses import Analysis, analysis_from_dict
+from ._analyses import Analysis, Tran, analysis_from_dict
 from ._model import ModelCard
 
 
@@ -35,9 +35,17 @@ _GROUND_NAMES = {"gnd", "vss", "v-", "agnd", "dgnd", "earth"}
 class NetMeta:
     name: str
     kind: NetKind = "signal"
+    # Suppresses the "referenced by only N part(s)" typo warning for this
+    # net.  Use on nets that are deliberately driven from outside the
+    # Circuit being built — sub-sheet boundary IOs, stimulus injection
+    # points, placeholders for parts present only in a sibling Circuit.
+    expect_external: bool = False
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "kind": self.kind}
+        d = {"name": self.name, "kind": self.kind}
+        if self.expect_external:
+            d["expect_external"] = True
+        return d
 
 
 def _auto_net_kind(name: str) -> NetKind:
@@ -82,8 +90,15 @@ class Circuit:
 
     # ---- net management ----
 
-    def net(self, name: str, kind: NetKind = "signal") -> "Circuit":
-        """Explicitly declare a net (optionally with kind).  Idempotent if kind matches."""
+    def net(self, name: str, kind: NetKind = "signal", *,
+            expect_external: bool = False) -> "Circuit":
+        """Explicitly declare a net (optionally with kind).  Idempotent if kind matches.
+
+        expect_external: marks the net as deliberately driven from outside
+            this Circuit (sub-sheet boundary IO, externally-injected stimulus,
+            etc.).  Suppresses the "referenced by only N part(s)" typo
+            warning in validate_all().
+        """
         if not name:
             raise ValueError("net name is required")
         existing = self.nets.get(name)
@@ -92,7 +107,9 @@ class Circuit:
                 f"net {name!r} already declared as {existing.kind!r}; "
                 f"can't redeclare as {kind!r}"
             )
-        self.nets[name] = NetMeta(name=name, kind=kind)
+        # Preserve a previously-set expect_external if caller didn't override.
+        external = expect_external or (existing.expect_external if existing else False)
+        self.nets[name] = NetMeta(name=name, kind=kind, expect_external=external)
         return self
 
     def _register_net_from_part(self, name: str) -> None:
@@ -148,6 +165,41 @@ class Circuit:
         self.analyses.append(a)
         return self
 
+    # ---- ergonomic .tran shortcut ----
+    #
+    # Several downstream projects assign `c.tran = Tran(...)` expecting it
+    # to register the analysis.  Make that work — and keep self.analyses as
+    # the single source of truth: setting `c.tran` replaces any existing
+    # Tran in self.analyses; reading returns the first Tran or None.
+
+    @property
+    def tran(self) -> Tran | None:
+        """The first Tran analysis registered on this Circuit, or None."""
+        for a in self.analyses:
+            if isinstance(a, Tran):
+                return a
+        return None
+
+    @tran.setter
+    def tran(self, t: Tran | None) -> None:
+        if t is not None and not isinstance(t, Tran):
+            raise TypeError(f"c.tran = ...: expected Tran, got {type(t).__name__}")
+        if t is not None and not t.step:
+            # Tran inherits `name` from Analysis as its first field, so
+            # `Tran('1u', '10m')` positionally writes to name+step, leaving
+            # stop empty.  Catch that here with a helpful message rather
+            # than letting the broken Tran sit on the Circuit until deck
+            # emission.
+            raise ValueError(
+                "c.tran = Tran(...): the assigned Tran has empty .step.  "
+                "Tran inherits a `name` field, so positional args set "
+                "name+step.  Use keyword args: Tran(step='1u', stop='10m')."
+            )
+        # Strip any existing Tran(s), append the new one (or none).
+        self.analyses = [a for a in self.analyses if not isinstance(a, Tran)]
+        if t is not None:
+            self.analyses.append(t)
+
     # ---- model lib search paths ----
 
     def add_model_lib(self, path: str | Path) -> "Circuit":
@@ -198,17 +250,22 @@ class Circuit:
         issues: list[str] = []
         errors: list[str] = []
 
-        # Orphan nets (used only by 1 part — likely typo)
+        # Orphan nets (used only by 1 part — likely typo).  Skip nets
+        # explicitly marked expect_external (sub-sheet boundary IOs, etc.).
         ref_count: dict[str, int] = {}
         for p in self.parts:
             for n in p.nets_used():
                 ref_count[n] = ref_count.get(n, 0) + 1
         for net_name, count in ref_count.items():
-            if count < 2:
-                issues.append(
-                    f"net {net_name!r} is referenced by only {count} part(s); "
-                    f"probable typo or missing connection"
-                )
+            if count >= 2:
+                continue
+            meta = self.nets.get(net_name)
+            if meta and meta.expect_external:
+                continue
+            issues.append(
+                f"net {net_name!r} is referenced by only {count} part(s); "
+                f"probable typo or missing connection"
+            )
 
         # Every IC net must be in the net set (already enforced by ic(); recheck)
         for net_name in self.initial_conditions:
@@ -267,7 +324,11 @@ class Circuit:
             c.models.append(ModelCard.from_dict(md))
         # Nets first so add() doesn't trample explicit declarations
         for name, meta in d.get("nets", {}).items():
-            c.net(name, meta.get("kind", "signal"))
+            c.net(
+                name,
+                meta.get("kind", "signal"),
+                expect_external=bool(meta.get("expect_external", False)),
+            )
         for pd in d.get("parts", []):
             c.parts.append(part_from_dict(pd))
         for net_name, v in d.get("initial_conditions", {}).items():
@@ -299,6 +360,23 @@ class Circuit:
     def to_spice_deck(self) -> str:
         from ._spice import to_spice_deck
         return to_spice_deck(self)
+
+    def run_tran(self, step: str | None = None, stop: str | None = None,
+                 *, uic: bool | None = None, ng=None) -> dict[str, list[float]]:
+        """Run a transient simulation and return the result vectors.
+
+        Wraps the PySpice / libngspice footguns (singleton lifecycle,
+        spurious-stderr exception, plot-name discovery, vector extraction).
+        See `_sim.py` for full docs and the precise error semantics.
+
+        Returns a dict mapping vector name → list[float].  Always includes
+        the time axis (typically under key "time").
+
+        Requires PySpice + ngspice on the system; raises ImportError if
+        PySpice is missing.
+        """
+        from ._sim import run_tran
+        return run_tran(self, step=step, stop=stop, uic=uic, ng=ng)
 
     def to_schematic(self, path: str | Path, *, kicad=None,
                      layout: str = "sugiyama",

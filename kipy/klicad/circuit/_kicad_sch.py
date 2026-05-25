@@ -227,12 +227,26 @@ def to_schematic(
               project_path}.
     """
     from kipy import KiCad
+    from kipy.errors import ConnectionError as KipyConnectionError
 
     sch_path = Path(sch_path).resolve()
     pro_path, sym_lib_table_path, models_lib_path = _bootstrap_project_files(c, sch_path)
 
     if kicad is None:
-        kicad = KiCad()
+        try:
+            kicad = KiCad()
+        except KipyConnectionError as e:
+            raise RuntimeError(
+                "to_schematic(): cannot reach KliCAD's IPC API.\n"
+                "  • Start KliCAD (the GUI must be running).\n"
+                "  • In Preferences → Plugins, ensure the IPC API is enabled.\n"
+                "  • If you're trying to do a headless build, that's not "
+                "supported — to_schematic() needs a live KliCAD process.\n"
+                "  • Note: the local project files (.kicad_pro, "
+                "models.lib, sym-lib-table) were still written to disk "
+                f"alongside {sch_path}.\n"
+                f"underlying error: {e}"
+            ) from e
 
     # The KliCAD instance must already be loaded on this project — load
     # otherwise (subject to schematic-switch crash if a different project
