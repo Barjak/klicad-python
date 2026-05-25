@@ -289,40 +289,20 @@ class Circuit:
                 errors.append(f"duplicate inline .model name {m.name!r}")
             seen_models.add(m.name)
 
-        # .SUBCKT registry — parse the configured .lib files and verify each
-        # XSubckt's subckt= name + node count matches a real .SUBCKT
-        # definition.  Catches the most common late-binding errors
-        # ("subcircuit not found", "too few terminals") at validate-time
-        # instead of at ngspice runtime.
-        x_parts = [p for p in self.parts if getattr(p, "kind", "") == "X"]
-        if x_parts:
-            from ._subckt_lib import parse_subckt_lib
-            registry: dict[str, int] = {}
-            for path in lib_paths:
-                # parse_subckt_lib() returns {} for missing files (already
-                # warned above) so we can call it unconditionally.
-                registry.update(parse_subckt_lib(path))
-            for x in x_parts:
-                name = getattr(x, "subckt", "")
-                if not name:
-                    continue
-                if name not in registry:
-                    # Warn (not error) — the subckt might come from a
-                    # not-yet-parseable lib, a verilog-A model, or some
-                    # other source we don't read.
-                    issues.append(
-                        f"XSubckt {x.ref!r} references subckt {name!r}, but "
-                        f"no .SUBCKT {name} was found in any configured "
-                        f"model_lib"
-                    )
-                    continue
-                expected = registry[name]
-                actual = len(x.pin_names)
-                if expected != actual:
-                    errors.append(
-                        f"XSubckt {x.ref!r}: .SUBCKT {name} has {expected} "
-                        f"terminal(s) but {actual} node(s) were provided"
-                    )
+        # .SUBCKT name + arity check for XSubckt instances is intentionally
+        # NOT done here.  KiCad already owns a SPICE library parser
+        # (SPICE_LIBRARY_PARSER → SIM_LIBRARY_SPICE → SIM_MODEL with
+        # GetPinCount() / GetPinNames()).  Implementing a parallel parser
+        # in Python would violate the thin-layer principle (see
+        # CONTRIBUTING.md): if KiCad ever wants to display the same
+        # parsed info in a GUI field, it would have to call back into
+        # Python — backward.  Single implementation, on the C++ side.
+        #
+        # The validate-time check moves to a RunPython call against the
+        # KiCad SIM_LIBRARY_SPICE bindings once those are exposed (pending
+        # work in the kicad submodule).  Until then, arity mismatches
+        # surface at ngspice runtime — same as they did before this file
+        # ever existed.
 
         self._warnings = issues
         if errors:

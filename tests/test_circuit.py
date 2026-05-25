@@ -439,77 +439,13 @@ def test_expect_external_default_not_in_dict():
 
 # ---- run_tran helper (requires PySpice + ngspice) ----------------------
 
-# ---- .lib parser + arity check (#4) -------------------------------------
-
-def test_subckt_lib_parser_basic(tmp_path):
-    from kipy.klicad.circuit._subckt_lib import parse_subckt_lib
-    lib = tmp_path / "test.lib"
-    lib.write_text(
-        "* Test library — three subckts\n"
-        ".SUBCKT R2P  in out\n"
-        "R1 in out 1k\n"
-        ".ENDS\n"
-        "\n"
-        ".SUBCKT TVS  a k  vbr=24 ipp=10\n"
-        "* params after pins must not count\n"
-        ".ENDS TVS\n"
-        "\n"
-        ".SUBCKT NMOS\n"
-        "+ d g s\n"
-        "* multi-line .SUBCKT via + continuation\n"
-        ".ENDS\n"
-    )
-    reg = parse_subckt_lib(lib)
-    assert reg == {"R2P": 2, "TVS": 2, "NMOS": 3}
-
-
-def test_subckt_lib_parser_missing_file_quiet(tmp_path):
-    from kipy.klicad.circuit._subckt_lib import parse_subckt_lib
-    assert parse_subckt_lib(tmp_path / "nope.lib") == {}
-
-
-def test_xsubckt_arity_check_passes(tmp_path):
-    """A matching subckt name + arity validates cleanly."""
-    lib = tmp_path / "ok.lib"
-    lib.write_text(".SUBCKT SMAJ24CA a k\nR1 a k 1G\n.ENDS\n")
-    c = Circuit("t")
-    c.add_model_lib(str(lib))
-    c.add(V("V1", "RAIL", "0", dc=24))
-    c.add(L("L1", "RAIL", "SW", "10m"))
-    c.add(R("R1", "SW", "0", "5"))
-    c.add(XSubckt("D1", ["SW", "RAIL"], subckt="SMAJ24CA"))
-    warnings = c.validate_all()
-    assert not any("SMAJ24CA" in w for w in warnings), warnings
-
-
-def test_xsubckt_arity_check_rejects_mismatch(tmp_path):
-    """Wrong node count for the .SUBCKT is an error."""
-    lib = tmp_path / "ok.lib"
-    lib.write_text(".SUBCKT SMAJ24CA a k\nR1 a k 1G\n.ENDS\n")
-    c = Circuit("t")
-    c.add_model_lib(str(lib))
-    c.add(V("V1", "RAIL", "0", dc=24))
-    # 3 nodes instead of 2 — must raise
-    c.add(XSubckt("D1", ["SW", "RAIL", "EXTRA"], subckt="SMAJ24CA"))
-    with pytest.raises(ValueError, match=r"SMAJ24CA.*2.*terminal.*3.*node"):
-        c.validate_all()
-
-
-def test_xsubckt_arity_warns_when_subckt_not_in_libs(tmp_path):
-    """Unknown subckt name → warning (not error) — model might come from
-    a verilog-A source or some other path we don't parse."""
-    lib = tmp_path / "ok.lib"
-    lib.write_text(".SUBCKT SOMETHING_ELSE a b\n.ENDS\n")
-    c = Circuit("t", strict=False)
-    c.add_model_lib(str(lib))
-    c.add(V("V1", "A", "0", dc=24))
-    c.add(R("R1", "A", "B", "1k"))
-    c.add(XSubckt("D1", ["A", "B"], subckt="UNKNOWN_PART"))
-    warnings = c.validate_all()
-    assert any("UNKNOWN_PART" in w for w in warnings), warnings
-
-
 # ---- to_spice_deck(self_running=False) (#2 follow-up) -------------------
+#
+# NOTE: an earlier draft of this file added Python-side .SUBCKT arity
+# checks via a local parser.  That parser was removed and the validate_all()
+# check pruned — see CONTRIBUTING.md ("thin-layer principle").  The check
+# will return as a RunPython call against KiCad's SPICE_LIBRARY_PARSER
+# once the SIM_LIBRARY_SPICE bindings are exposed on the C++ side.
 
 def test_self_running_default_emits_control():
     c = Circuit("t")
