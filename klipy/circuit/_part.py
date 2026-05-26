@@ -607,7 +607,97 @@ class XSubckt(Part):
         return d
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# SubcircuitInstance — a sub-Circuit instantiated in a parent.
+#
+# Returned by Circuit.instance(ref, **port_map).  Lives in the parent's
+# c.parts list with kind="SUBCIRCUIT".  Emits as an X-line in SPICE
+# (`X<ref> <expanded_nets...> <subckt_name>`) and as a SCH_SHEET on
+# the parent canvas in to_schematic (Phase H2).
+# ──────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class SubcircuitInstance(Part):
+    """A Sub-Circuit instantiated in a parent Circuit.
+
+    Not constructed directly — use `Circuit.instance(ref, **port_map)`
+    so the bus expansion + validation runs against the definition.
+
+    Per-instance pin_names + connections (not class-level — different
+    instances can have different expansions if the definition is
+    mutated between instantiations).  kicad_lib_id / kicad_pin_map are
+    unused (sheet instances are placed as SCH_SHEET via add_sheet,
+    not as SCH_SYMBOL via add_symbol).
+    """
+    kind          = "SUBCIRCUIT"
+    spice_letter  = "X"
+    kicad_lib_id  = ""
+
+    # Set during __init__; per-instance, not class-level.
+    pin_names: tuple[str, ...] = ()             # type: ignore[assignment]
+    kicad_pin_map: dict[str, str] = field(      # type: ignore[assignment]
+        default_factory=dict, init=False,
+    )
+
+    # Reference to the definition Circuit — held weakly in spirit
+    # (the dataclass doesn't enforce, but downstream emitters walk
+    # via this reference for recursive .SUBCKT generation).
+    definition: object = None                   # actually "Circuit"
+    subckt: str = ""                            # definition's name
+
+    def __init__(self, ref: str, definition, *,
+                 port_map: dict[str, str],
+                 footprint: str = ""):
+        if not ref:
+            raise ValueError("SubcircuitInstance: missing ref designator")
+        if definition is None or not getattr(definition, "is_subcircuit", False):
+            raise ValueError(
+                f"SubcircuitInstance {ref}: definition must be a Circuit "
+                f"constructed with ports=..."
+            )
+        super().__init__(ref=ref, value=definition.name, footprint=footprint)
+        self.definition = definition
+        self.subckt = definition.name
+        # Expand port_map against the definition's port_decl.
+        from ._bus import expand_port_map, expand_port_decl
+        expanded = expand_port_map(definition._port_decl, port_map)
+        # pin_names is the definition's expanded port list, in declaration
+        # order — that's the .SUBCKT signature order and the X-line
+        # argument order.
+        self.pin_names = tuple(expand_port_decl(definition._port_decl))
+        self.connections = {p: expanded[p] for p in self.pin_names}
+
+    def _x_ref(self) -> str:
+        return self.ref if self.ref[:1].upper() == "X" else f"X{self.ref}"
+
+    def spice_line(self) -> str:
+        # X<ref> <net1> <net2> ... <subckt_name>
+        # Nets are in pin_names order = .SUBCKT signature order.
+        nets = " ".join(self.connections[p] for p in self.pin_names)
+        return f"{self._x_ref()} {nets} {self.subckt}"
+
+    def validate(self) -> None:
+        if not self.ref:
+            raise ValueError("SubcircuitInstance: missing ref")
+        if not self.subckt:
+            raise ValueError(f"SubcircuitInstance {self.ref}: missing subckt name")
+        missing = [p for p in self.pin_names if not self.connections.get(p)]
+        if missing:
+            raise ValueError(
+                f"SubcircuitInstance {self.ref}: pins {missing} unconnected"
+            )
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["subckt"] = self.subckt
+        return d
+
+
 # Public registry for from_dict reconstruction + extensibility checks.
+# NOTE: SubcircuitInstance is intentionally NOT registered here — it
+# requires a definition Circuit object to reconstruct, which doesn't
+# round-trip through to_dict/from_dict alone.  Save the definition
+# separately and rebuild via Circuit.instance().
 ALL_PARTS: dict[str, type[Part]] = {
     cls.kind: cls
     for cls in (R, C, L, D, LED, NPN, PNP, NMOS, PMOS, NJFET, PJFET, V, I, XSubckt)

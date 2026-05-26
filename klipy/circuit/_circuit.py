@@ -131,9 +131,61 @@ class Circuit:
     model_lib_paths: list[str] = field(default_factory=list)
     # Inline SPICE `.model` cards, emitted ahead of the element lines.
     models: list[ModelCard] = field(default_factory=list)
+    # Port list — passing ports=[...] at construction makes this Circuit
+    # instance-able as a Sub-Circuit (KiCad sub-sheet ↔ SPICE .SUBCKT).
+    # See klipy/circuit/_bus.py for bus syntax.  None means root Circuit.
+    ports: list[str] | None = None
     # Strictness knobs (mostly for testing or generated code).
     strict: bool = True            # warnings become errors when True
     _warnings: list[str] = field(default_factory=list, init=False)
+    # Populated by __post_init__ when ports is non-None.
+    _port_decl:       list[str] = field(default_factory=list, init=False)
+    _ports_expanded:  list[str] = field(default_factory=list, init=False)
+
+    def __post_init__(self) -> None:
+        if self.ports is not None:
+            from ._bus import expand_port_decl
+            # validate + expand; validate_port_decl runs inside expand
+            self._port_decl      = list(self.ports)
+            self._ports_expanded = expand_port_decl(self._port_decl)
+
+    # ---- Sub-Circuit instance-ability ----
+
+    @property
+    def is_subcircuit(self) -> bool:
+        """True if this Circuit was constructed with ports= (it's a definition).
+
+        Root Circuits are emitted as the top-level deck + schematic.
+        Sub-Circuit definitions can be instantiated in a parent via
+        .instance(ref, **port_map); they're emitted as .SUBCKT blocks
+        and (in H2) as child .kicad_sch files.
+        """
+        return self.ports is not None
+
+    def instance(self, ref: str, **port_map: str) -> "Part":
+        """Return a SubcircuitInstance binding this Sub-Circuit's ports to
+        external nets in a parent Circuit.  Add via `parent.add(...)`:
+
+            amp = Circuit("amp", ports=["IN", "OUT", "VCC", "GND"])
+            amp.add(...)
+
+            top = Circuit("top")
+            top.add(amp.instance("U_amp1",
+                                 IN="AUDIO_IN", OUT="AUDIO_OUT",
+                                 VCC="+12V", GND="GND"))
+
+        port_map keys may be scalar port names, base names of bus
+        ports, or full bus-range forms.  See _bus.expand_port_map.
+        """
+        if not self.is_subcircuit:
+            raise ValueError(
+                f"Circuit({self.name!r}).instance(): this Circuit was not "
+                f"declared with ports=; only Sub-Circuit definitions can "
+                f"be instantiated.  To make it a Sub-Circuit, construct as "
+                f"Circuit({self.name!r}, ports=[...])."
+            )
+        from ._part import SubcircuitInstance
+        return SubcircuitInstance(ref, self, port_map=port_map)
 
     # ---- net management ----
 

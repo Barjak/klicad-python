@@ -66,6 +66,106 @@ def _rewrite_grounds_in_part(p) -> str:
     return " ".join([head, *rewritten, *tail])
 
 
+def _reachable_subcircuit_defs(c: "Circuit") -> list["Circuit"]:
+    """Walk c's parts (and transitively any Sub-Circuit bodies) and return
+    each distinct definition Circuit, once, in first-seen order.
+
+    Keyed by `id()` — the same definition object instantiated N times in
+    a parent collapses to one `.SUBCKT` block.  Different Circuit
+    objects sharing a name are distinct (SPICE may complain at
+    netlist-load time; that's a name-collision check, not our job).
+    """
+    seen: dict[int, "Circuit"] = {}
+    order: list["Circuit"] = []
+
+    def walk(circuit: "Circuit") -> None:
+        for p in circuit.parts:
+            if getattr(p, "kind", "") == "SUBCIRCUIT":
+                defn = p.definition  # type: ignore[attr-defined]
+                if id(defn) not in seen:
+                    seen[id(defn)] = defn
+                    order.append(defn)
+                    walk(defn)   # transitive — handles nested Sub-Circuits
+
+    walk(c)
+    return order
+
+
+def _validate_spice_names(c: "Circuit") -> None:
+    """Boundary check: every ref/net/model name emitted is SPICE-safe.
+
+    Called once at the top of to_spice_deck, before any string assembly.
+    Raises with a specific message on the first violation.
+    """
+    from ._bus import validate_spice_name
+
+    def check_circuit(circuit: "Circuit") -> None:
+        for p in circuit.parts:
+            validate_spice_name(p.ref, kind="ref")
+            if getattr(p, "model", ""):
+                validate_spice_name(p.model, kind="model")
+            for net in p.connections.values():
+                validate_spice_name(net, kind="net")
+
+    check_circuit(c)
+    for defn in _reachable_subcircuit_defs(c):
+        check_circuit(defn)
+
+
+def _emit_subckt_block(defn: "Circuit") -> list[str]:
+    """Emit `.SUBCKT name port1 port2 ... portN` + body + `.ENDS name`.
+
+    Body Parts go through the same ground-rewrite as the root; ports are
+    the expanded scalar list in declaration order (`.SUBCKT` signature
+    order).  No .include / .control / .ic inside a .SUBCKT — those are
+    deck-level.  Inline `.model` cards from the body ARE emitted inside
+    the .SUBCKT (they're local to it in SPICE).
+    """
+    if not defn.is_subcircuit:
+        raise ValueError(
+            f"_emit_subckt_block: {defn.name!r} is not a Sub-Circuit "
+            f"(no ports= declared)"
+        )
+    lines: list[str] = []
+    ports = " ".join(defn._ports_expanded)
+    lines.append(f".SUBCKT {defn.name} {ports}")
+    # Inline .model cards (scoped to this .SUBCKT)
+    for m in defn.models:
+        lines.append("  " + m.spice_line())
+    # Body element lines
+    for p in defn.parts:
+        lines.append("  " + _rewrite_grounds_in_part(p))
+    lines.append(f".ENDS {defn.name}")
+    return lines
+
+
+def _collect_implicit_globals(c: "Circuit") -> list[str]:
+    """Collect non-ground power-net names used anywhere in the hierarchy.
+
+    Emitted as a single `.global` directive so power nets flow across
+    .SUBCKT boundaries (matching KiCad's power-symbol semantics).
+    `GND` / `0` is already SPICE-global; not included here.
+    """
+    from ._bus import is_power_name
+
+    names: dict[str, None] = {}   # ordered set
+
+    def collect(circuit: "Circuit") -> None:
+        for p in circuit.parts:
+            for net in p.connections.values():
+                if not is_power_name(net):
+                    continue
+                # Ground aliases are already global; skip.
+                if net.upper() in _GROUND_ALIASES:
+                    continue
+                names[net] = None
+
+    collect(c)
+    for defn in _reachable_subcircuit_defs(c):
+        collect(defn)
+    return list(names)
+
+
 def to_spice_deck(c: "Circuit", *, self_running: bool = True, kicad=None) -> str:
     """Render Circuit `c` as a SPICE deck string.
 
@@ -78,8 +178,19 @@ def to_spice_deck(c: "Circuit", *, self_running: bool = True, kicad=None) -> str
         explicitly via `exec_command()` (sourcing a self-running deck and
         then running `tran` again causes a double-tran error).
         `Circuit.run_tran()` uses self_running=False.
+
+    Refuses on Sub-Circuit definitions — pass the root Circuit; Sub-
+    Circuits are emitted as `.SUBCKT` blocks ahead of the root's
+    element lines.
     """
+    if c.is_subcircuit:
+        raise ValueError(
+            f"to_spice_deck: {c.name!r} is a Sub-Circuit definition "
+            f"(ports={c._port_decl}).  Pass the root Circuit; Sub-Circuits "
+            f"are emitted as .SUBCKT blocks automatically."
+        )
     c.validate_all(kicad=kicad)
+    _validate_spice_names(c)
 
     lines: list[str] = []
 
@@ -91,19 +202,39 @@ def to_spice_deck(c: "Circuit", *, self_running: bool = True, kicad=None) -> str
         lines.append(f"* {c.desc}")
 
     # Model library includes — circuit-level libs first, then any per-part
-    # .library files, deduped while preserving first-seen order.
+    # .library files, deduped while preserving first-seen order.  Walk
+    # the hierarchy so Sub-Circuit bodies' libs are visible too.
     includes: list[str] = list(c.model_lib_paths)
-    for p in c.parts:
-        if p.library and p.library not in includes:
-            includes.append(p.library)
+    def collect_libs(circuit: "Circuit") -> None:
+        for path in circuit.model_lib_paths:
+            if path not in includes:
+                includes.append(path)
+        for p in circuit.parts:
+            if getattr(p, "library", "") and p.library not in includes:
+                includes.append(p.library)
+    collect_libs(c)
+    for defn in _reachable_subcircuit_defs(c):
+        collect_libs(defn)
     for path in includes:
         lines.append(f".include {path}")
 
-    # Inline .model cards
+    # Implicit-power globals — make VCC / +12V / etc. flow across .SUBCKT
+    # boundaries.  GND is already SPICE-global; omitted.
+    globals_ = _collect_implicit_globals(c)
+    if globals_:
+        lines.append(f".global {' '.join(globals_)}")
+
+    # Root-level inline .model cards (Sub-Circuit bodies emit their own
+    # scoped models inside their .SUBCKT blocks via _emit_subckt_block).
     for m in c.models:
         lines.append(m.spice_line())
 
-    # Element lines, in insertion order so the deck is human-diffable
+    # .SUBCKT blocks for every reachable Sub-Circuit definition.
+    for defn in _reachable_subcircuit_defs(c):
+        lines.append("")
+        lines.extend(_emit_subckt_block(defn))
+
+    # Root element lines, in insertion order so the deck is human-diffable.
     if c.parts:
         lines.append("")
         for p in c.parts:
