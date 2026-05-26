@@ -213,6 +213,35 @@ def _power_lib_id_for(name: str) -> str:
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────────
 
+def write_project_shell(c: "Circuit", sch_path) -> dict:
+    """Write the offline-safe project shell for a Circuit.
+
+    Generates the .kicad_pro, sym-lib-table, and models.lib files
+    alongside `sch_path`, plus a minimal .kicad_sch stub if absent.
+    Does NOT require KliCAD running; never raises on missing IPC.
+
+    This is the always-succeeds half of `to_schematic()`.  The
+    place-parts half (`place_parts()`) requires KliCAD.  Callers who
+    want the full flow should keep using `to_schematic()`; this split
+    is for tools that want to produce the project tree offline and
+    place parts later, or want to inspect the shell separately from
+    the placement.
+
+    Returns {ok, sch_path, project_path, models_lib_path,
+              sym_lib_table_path}.  `ok` is always True; failure here
+    would be filesystem-level and propagates as the usual OSError.
+    """
+    sch_path = Path(sch_path).resolve()
+    pro_path, sym_lib_table_path, models_lib_path = _bootstrap_project_files(c, sch_path)
+    return {
+        "ok": True,
+        "sch_path": str(sch_path),
+        "project_path": str(pro_path),
+        "models_lib_path": str(models_lib_path),
+        "sym_lib_table_path": str(sym_lib_table_path),
+    }
+
+
 def to_schematic(
     c: "Circuit",
     sch_path,
@@ -225,13 +254,27 @@ def to_schematic(
 
     Returns {ok, parts_placed, labels_placed, sch_path, models_lib_path,
               project_path}.
+
+    Internally splits into two phases:
+      1. `write_project_shell()` — offline, always-succeeds, writes
+         .kicad_pro / sym-lib-table / models.lib / .kicad_sch stub.
+      2. KliCAD-side part placement — requires the IPC API.
+
+    If you want the offline phase only (e.g. KliCAD isn't running and
+    you'll place parts later), call `write_project_shell()` directly.
     """
     from kipy import KiCad
     from kipy.errors import ConnectionError as KipyConnectionError
 
-    sch_path = Path(sch_path).resolve()
-    pro_path, sym_lib_table_path, models_lib_path = _bootstrap_project_files(c, sch_path)
+    # Phase 1 — offline shell.  Always-succeeds; ensures the project tree
+    # exists on disk before the IPC step that may fail.
+    shell = write_project_shell(c, sch_path)
+    sch_path = Path(shell["sch_path"])
+    pro_path = Path(shell["project_path"])
+    sym_lib_table_path = Path(shell["sym_lib_table_path"])
+    models_lib_path = Path(shell["models_lib_path"])
 
+    # Phase 2 — IPC-bound placement.
     if kicad is None:
         try:
             kicad = KiCad()
@@ -242,9 +285,10 @@ def to_schematic(
                 "  • In Preferences → Plugins, ensure the IPC API is enabled.\n"
                 "  • If you're trying to do a headless build, that's not "
                 "supported — to_schematic() needs a live KliCAD process.\n"
-                "  • Note: the local project files (.kicad_pro, "
-                "models.lib, sym-lib-table) were still written to disk "
-                f"alongside {sch_path}.\n"
+                "  • The offline shell files (.kicad_pro, sym-lib-table, "
+                "models.lib, .kicad_sch stub) WERE written alongside "
+                f"{sch_path}.  You can call write_project_shell() directly "
+                "to skip the placement step entirely.\n"
                 f"underlying error: {e}"
             ) from e
 

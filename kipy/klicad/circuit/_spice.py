@@ -66,7 +66,7 @@ def _rewrite_grounds_in_part(p) -> str:
     return " ".join([head, *rewritten, *tail])
 
 
-def to_spice_deck(c: "Circuit", *, self_running: bool = True) -> str:
+def to_spice_deck(c: "Circuit", *, self_running: bool = True, kicad=None) -> str:
     """Render Circuit `c` as a SPICE deck string.
 
     Calls c.validate_all() first; warnings go to c._warnings.  Raises on
@@ -79,7 +79,7 @@ def to_spice_deck(c: "Circuit", *, self_running: bool = True) -> str:
         then running `tran` again causes a double-tran error).
         `Circuit.run_tran()` uses self_running=False.
     """
-    c.validate_all()
+    c.validate_all(kicad=kicad)
 
     lines: list[str] = []
 

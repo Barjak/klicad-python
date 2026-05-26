@@ -243,6 +243,21 @@ class KiCad:
     def ping(self):
         self._client.send(commands.Ping(), Empty)
 
+    def is_alive(self) -> bool:
+        """Cheap probe: True if KiCad's IPC API responds to a Ping; False otherwise.
+
+        Use to branch flow up-front when KliCAD may not be running.  Unlike
+        ``ping()``, this swallows any IPC / connection errors and returns
+        False instead of raising — appropriate for ``if k.is_alive(): …``
+        guards.  Does not wait on slow operations; only confirms the
+        round-trip works.
+        """
+        try:
+            self._client.send(commands.Ping(), Empty)
+            return True
+        except Exception:
+            return False
+
     def run_python(self, code: str) -> "RunPythonResult":
         """Run Python source in KiCad's embedded interpreter (local fork).
 

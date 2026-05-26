@@ -20,6 +20,53 @@ from ._analyses import Analysis, Tran, analysis_from_dict
 from ._model import ModelCard
 
 
+class _SubcktRegistryUnavailable(Exception):
+    """Raised when KliCAD's parse_subckt_lib binding can't be reached."""
+
+
+def _fetch_subckt_registry(kicad, lib_paths: list[str]) -> dict[str, int]:
+    """Call kicad_native_sim_advanced.parse_subckt_lib for each lib path.
+
+    Returns {subckt_name: pin_count} merged across all libs (last wins on
+    duplicate names, matching ngspice's late-binding semantics).
+
+    Raises _SubcktRegistryUnavailable on any IPC / binding failure — the
+    caller turns this into a "check skipped" notice rather than blowing up.
+    """
+    import ast
+    import json
+
+    paths_repr = json.dumps([str(p) for p in lib_paths])
+    code = (
+        "import kicad_native_sim_advanced as sa\n"
+        f"_paths = {paths_repr}\n"
+        "_out = {}\n"
+        "for _p in _paths:\n"
+        "    _r = sa.parse_subckt_lib(_p)\n"
+        "    if _r.get('ok'):\n"
+        "        for _n, _info in _r['models'].items():\n"
+        "            _out[_n] = int(_info['pin_count'])\n"
+        "_out\n"
+    )
+    try:
+        r = kicad.run_python(code)
+    except Exception as e:
+        raise _SubcktRegistryUnavailable(
+            f"KliCAD IPC unavailable ({e!r})"
+        ) from e
+    if not r.ok:
+        raise _SubcktRegistryUnavailable(
+            f"kicad_native_sim_advanced.parse_subckt_lib failed: "
+            f"{r.exception_traceback or r.stderr or r.stdout}"
+        )
+    try:
+        return ast.literal_eval(r.result_repr or "{}")
+    except (ValueError, SyntaxError) as e:
+        raise _SubcktRegistryUnavailable(
+            f"could not parse subckt registry result ({e!r}): {r.result_repr!r}"
+        ) from e
+
+
 # Net kind: 'signal' is the default; 'power' / 'ground' are auto-detected by
 # common name conventions and trigger power-symbol placement in to_kicad_sch.
 NetKind = Literal["signal", "power", "ground"]
@@ -240,7 +287,7 @@ class Circuit:
 
     # ---- final pre-emit validation ----
 
-    def validate_all(self) -> list[str]:
+    def validate_all(self, *, kicad=None) -> list[str]:
         """Run integrity checks for orphan nets, missing models, etc.
 
         Returns a list of warning strings; raises if strict=True and any
@@ -289,20 +336,46 @@ class Circuit:
                 errors.append(f"duplicate inline .model name {m.name!r}")
             seen_models.add(m.name)
 
-        # .SUBCKT name + arity check for XSubckt instances is intentionally
-        # NOT done here.  KiCad already owns a SPICE library parser
-        # (SPICE_LIBRARY_PARSER → SIM_LIBRARY_SPICE → SIM_MODEL with
-        # GetPinCount() / GetPinNames()).  Implementing a parallel parser
-        # in Python would violate the thin-layer principle (see
-        # CONTRIBUTING.md): if KiCad ever wants to display the same
-        # parsed info in a GUI field, it would have to call back into
-        # Python — backward.  Single implementation, on the C++ side.
-        #
-        # The validate-time check moves to a RunPython call against the
-        # KiCad SIM_LIBRARY_SPICE bindings once those are exposed (pending
-        # work in the kicad submodule).  Until then, arity mismatches
-        # surface at ngspice runtime — same as they did before this file
-        # ever existed.
+        # .SUBCKT name + arity check for XSubckt instances.  Delegates to
+        # KiCad's C++ SPICE_LIBRARY_PARSER + SIM_LIBRARY_SPICE via the
+        # kicad_native_sim_advanced.parse_subckt_lib binding — the
+        # authoritative source.  Skipped when no KiCad client is supplied
+        # (the only Python-side validation that requires KliCAD).
+        x_parts = [p for p in self.parts if getattr(p, "kind", "") == "X"]
+        if x_parts and kicad is not None and lib_paths:
+            try:
+                registry = _fetch_subckt_registry(kicad, lib_paths)
+            except _SubcktRegistryUnavailable as e:
+                issues.append(
+                    f"XSubckt arity check skipped — {e}.  Mismatches will "
+                    f"surface at ngspice runtime instead."
+                )
+                registry = None
+            if registry is not None:
+                for x in x_parts:
+                    name = getattr(x, "subckt", "")
+                    if not name:
+                        continue
+                    if name not in registry:
+                        issues.append(
+                            f"XSubckt {x.ref!r} references subckt {name!r}, but "
+                            f"no .SUBCKT {name} was found in any configured "
+                            f"model_lib (per KiCad's SPICE_LIBRARY_PARSER)"
+                        )
+                        continue
+                    expected = registry[name]
+                    actual = len(x.pin_names)
+                    if expected != actual:
+                        errors.append(
+                            f"XSubckt {x.ref!r}: .SUBCKT {name} has {expected} "
+                            f"terminal(s) per KiCad, but {actual} node(s) were "
+                            f"provided"
+                        )
+        elif x_parts and kicad is None:
+            # Note (not warn): the user simply didn't pass kicad=.
+            # Don't pollute warnings list — emitting a SPICE deck
+            # without a kicad client is a normal use case.
+            pass
 
         self._warnings = issues
         if errors:
@@ -372,9 +445,9 @@ class Circuit:
 
     # ---- conversion stubs (delegated to other modules) ----
 
-    def to_spice_deck(self, *, self_running: bool = True) -> str:
+    def to_spice_deck(self, *, self_running: bool = True, kicad=None) -> str:
         from ._spice import to_spice_deck
-        return to_spice_deck(self, self_running=self_running)
+        return to_spice_deck(self, self_running=self_running, kicad=kicad)
 
     def run_tran(self, step: str | None = None, stop: str | None = None,
                  *, uic: bool | None = None, ng=None) -> dict[str, list[float]]:

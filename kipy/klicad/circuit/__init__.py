@@ -59,6 +59,7 @@ from ._analyses import (
     Control,
     ALL_ANALYSES,
 )
+from ._kicad_sch import write_project_shell
 
 # Absolute path to the bundled SPICE model starter library.  Pass to
 # Circuit.add_model_lib(STANDARD_MODEL_LIB).
@@ -71,4 +72,5 @@ __all__ = [
     "Analysis", "Tran", "Ac", "Dc", "Op", "Noise", "Control",
     "ALL_PARTS", "ALL_ANALYSES",
     "STANDARD_MODEL_LIB",
+    "write_project_shell",
 ]

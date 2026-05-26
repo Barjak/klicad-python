@@ -470,6 +470,119 @@ def test_self_running_false_omits_control():
     assert "tran 1u 10m" not in deck
 
 
+# ---- write_project_shell (offline half of to_schematic) ----------------
+
+def test_write_project_shell_writes_files(tmp_path):
+    from kipy.klicad.circuit._kicad_sch import write_project_shell
+    c = build_led_oscillator()
+    sch = tmp_path / "led_osc.kicad_sch"
+    out = write_project_shell(c, sch)
+    assert out["ok"] is True
+    assert Path(out["project_path"]).exists()
+    assert Path(out["models_lib_path"]).exists()
+    assert Path(out["sym_lib_table_path"]).exists()
+    assert Path(out["sch_path"]).exists()
+
+
+def test_write_project_shell_no_kicad_needed(tmp_path):
+    """Offline call must not attempt any IPC."""
+    from kipy.klicad.circuit._kicad_sch import write_project_shell
+    c = Circuit("tiny")
+    c.add(R("R1", "A", "0", "1k"))
+    c.add(R("R2", "A", "B", "1k"))
+    out = write_project_shell(c, tmp_path / "tiny.kicad_sch")
+    assert out["ok"] is True
+
+
+# ---- validate_all(kicad=...) — IPC arity check delegate ----------------
+
+class _FakeRunPython:
+    """Tiny mock that mimics kipy.KiCad.run_python returning a dict-repr."""
+
+    def __init__(self, registry: dict[str, int] | None, *, raise_exc: Exception | None = None):
+        self._registry = registry
+        self._raise = raise_exc
+
+    def run_python(self, code: str):
+        if self._raise is not None:
+            raise self._raise
+
+        class _R:
+            ok = True
+            stdout = ""
+            stderr = ""
+            exception_traceback = ""
+
+            def __init__(self, repr_str):
+                self.result_repr = repr_str
+
+        if self._registry is None:
+            r = _R("{}")
+            r.ok = False
+            r.exception_traceback = "simulated failure"
+            return r
+        return _R(repr(self._registry))
+
+
+def test_validate_all_with_kicad_arity_passes(tmp_path):
+    """When the mock registry agrees with the XSubckt, no warnings/errors."""
+    c = Circuit("t", strict=False)
+    c.add_model_lib(str(tmp_path / "fake.lib"))
+    (tmp_path / "fake.lib").write_text(".SUBCKT SMAJ24CA a k\n.ENDS\n")
+    c.add(V("V1", "RAIL", "0", dc=24))
+    c.add(R("R1", "RAIL", "SW", "5"))
+    c.add(XSubckt("D1", ["SW", "RAIL"], subckt="SMAJ24CA"))
+    fk = _FakeRunPython({"SMAJ24CA": 2})
+    warnings = c.validate_all(kicad=fk)
+    assert not any("SMAJ24CA" in w for w in warnings), warnings
+
+
+def test_validate_all_with_kicad_arity_mismatch_raises(tmp_path):
+    c = Circuit("t", strict=False)
+    c.add_model_lib(str(tmp_path / "fake.lib"))
+    (tmp_path / "fake.lib").write_text(".SUBCKT SMAJ24CA a k\n.ENDS\n")
+    c.add(V("V1", "RAIL", "0", dc=24))
+    c.add(XSubckt("D1", ["SW", "RAIL", "EXTRA"], subckt="SMAJ24CA"))
+    fk = _FakeRunPython({"SMAJ24CA": 2})
+    with pytest.raises(ValueError, match=r"SMAJ24CA.*2 terminal.*3 node"):
+        c.validate_all(kicad=fk)
+
+
+def test_validate_all_with_kicad_unknown_subckt_warns(tmp_path):
+    c = Circuit("t", strict=False)
+    c.add_model_lib(str(tmp_path / "fake.lib"))
+    (tmp_path / "fake.lib").write_text(".SUBCKT SOMETHING_ELSE a b\n.ENDS\n")
+    c.add(V("V1", "A", "0", dc=24))
+    c.add(XSubckt("D1", ["A", "0"], subckt="UNKNOWN_PART"))
+    fk = _FakeRunPython({"SOMETHING_ELSE": 2})
+    warnings = c.validate_all(kicad=fk)
+    assert any("UNKNOWN_PART" in w for w in warnings), warnings
+
+
+def test_validate_all_with_kicad_ipc_failure_skips_check(tmp_path):
+    """If the IPC call fails, the check skips with a notice — never raises."""
+    c = Circuit("t", strict=False)
+    c.add_model_lib(str(tmp_path / "fake.lib"))
+    (tmp_path / "fake.lib").write_text(".SUBCKT X a k\n.ENDS\n")
+    c.add(V("V1", "A", "0", dc=5))
+    c.add(XSubckt("D1", ["A", "0"], subckt="X"))
+    fk = _FakeRunPython(None, raise_exc=RuntimeError("boom"))
+    warnings = c.validate_all(kicad=fk)
+    assert any("skipped" in w.lower() for w in warnings), warnings
+
+
+def test_validate_all_without_kicad_doesnt_warn(tmp_path):
+    """No kicad= → check silently skipped, no warnings about it."""
+    c = Circuit("t", strict=False)
+    c.add_model_lib(str(tmp_path / "fake.lib"))
+    (tmp_path / "fake.lib").write_text(".SUBCKT X a k\n.ENDS\n")
+    c.add(V("V1", "A", "0", dc=5))
+    c.add(XSubckt("D1", ["A", "0"], subckt="X"))
+    warnings = c.validate_all()
+    assert not any("subckt" in w.lower() or "arity" in w.lower() or "skipped" in w.lower()
+                   for w in warnings), warnings
+
+
 # ---- live ngspice ------------------------------------------------------
 
 @pytest.fixture
