@@ -249,11 +249,12 @@ def to_schematic(
     kicad=None,
     layout: str = "sugiyama",
     route: bool = False,
+    mode: str = "diff",
 ) -> dict:
     """Generate a complete .kicad_sch (+ project files + models.lib) for circuit c.
 
-    Returns {ok, parts_placed, labels_placed, sch_path, models_lib_path,
-              project_path}.
+    Returns {ok, parts_placed, labels_placed, wires_placed, sch_path,
+             models_lib_path, project_path, mode, kept, added, removed}.
 
     Internally splits into two phases:
       1. `write_project_shell()` — offline, always-succeeds, writes
@@ -262,7 +263,22 @@ def to_schematic(
 
     If you want the offline phase only (e.g. KliCAD isn't running and
     you'll place parts later), call `write_project_shell()` directly.
+
+    mode controls idempotency on re-runs against the same schematic:
+      * "diff" (default) — preserve symbols whose ref still exists in
+        the Circuit (their positions survive); delete refs no longer
+        present; place fresh refs.  Wires/labels/junctions are wiped
+        and re-emitted each call (cheap routing, expensive layout).
+      * "replace" — clear every symbol + wire + label, then place from
+        scratch.  Use when you want layout to be fully recomputed.
+      * "strict" — refuse to run on a non-empty schematic.  The pre-
+        cleanup behavior; kept for tests that want a hard fail-fast.
     """
+    if mode not in ("diff", "replace", "strict"):
+        raise ValueError(
+            f"to_schematic: mode must be 'diff' | 'replace' | 'strict', "
+            f"got {mode!r}"
+        )
     from klipy import KliCAD
     from klipy.errors import ConnectionError as KipyConnectionError
 
@@ -296,14 +312,14 @@ def to_schematic(
     # otherwise (subject to schematic-switch crash if a different project
     # is already open).
     pre = kicad.run_python(
-        "import kicad_native_project_manager as pm; pm.get_current_project()"
+        "import klicad_native_project_manager as pm; pm.get_current_project()"
     )
     if pre.ok and pro_path.name in pre.result_repr:
         # Already loaded.
         pass
     else:
         r = kicad.run_python(
-            f"import kicad_native_project_manager as pm; "
+            f"import klicad_native_project_manager as pm; "
             f"pm.load_project({str(pro_path)!r})"
         )
         if not r.ok:
@@ -313,34 +329,114 @@ def to_schematic(
 
     # Open the schematic.
     r = kicad.run_python(
-        "import kicad_native_gui as g; g.show_frame('schematic')\n"
-        f"import kicad_native_schematic_state as ss\n"
+        "import klicad_native_gui as g; g.show_frame('schematic')\n"
+        f"import klicad_native_schematic_state as ss\n"
         f"ss.open_schematic({str(sch_path)!r})"
     )
     if not r.ok:
         raise RuntimeError(f"open_schematic failed: {r.exception_traceback}")
 
-    # Idempotency guard: full-rebuild path is not idempotent — running
-    # twice on the same schematic doubles the placements (each add_symbol
-    # appends; we don't delete pre-existing content yet).  Phase C will
-    # add incremental update via diff/apply.  For now, refuse to proceed
-    # if the schematic already has symbols on it — the user must clear
-    # them manually (Edit → Select All → Delete) in the schematic editor,
-    # or delete the .kicad_sch file before launching KliCAD.
+    # Enumerate existing symbols on the schematic.  list_symbols returns
+    # one dict per placed SCH_SYMBOL with kiid + reference + lib_id +
+    # position; we key by ref because that's the user-facing identity
+    # that survives across re-runs of the build script.
     r = kicad.run_python(
-        "import kicad_native_schematic_state as ss; "
-        "ss.get_items_summary().get('symbols', 0)"
+        "import klicad_native_schematic_state as ss; ss.list_symbols()"
     )
-    if r.ok and int(r.result_repr) > 0:
+    if not r.ok:
         raise RuntimeError(
-            f"to_schematic() refuses to run on a schematic that already "
-            f"has {r.result_repr} symbols; running would double-place them. "
-            f"Either clear the schematic (Edit → Select All → Delete in "
-            f"the editor) or delete {sch_path} + launch KliCAD on the "
-            f"project from scratch.  Phase C will add incremental update."
+            f"to_schematic: list_symbols failed: {r.exception_traceback}"
+        )
+    import ast
+    existing = ast.literal_eval(r.result_repr)
+    # Filter out power-flag symbols (KiCad convention: ref prefixed with '#').
+    # _place_power_symbols emits them every pass; they're not in c.parts and
+    # would otherwise read as "needs removal" on every diff iteration.
+    existing = [row for row in existing if not row["ref"].startswith("#")]
+    existing_by_ref = {row["ref"]: row for row in existing}
+
+    # Validate: a circuit with duplicate refs has ambiguous identity under
+    # diff/apply (which symbol does "R1" point at when the build script
+    # declares it twice?).  Catch this early with a clear error.
+    seen = set()
+    dups = []
+    for p in c.parts:
+        if p.ref in seen:
+            dups.append(p.ref)
+        seen.add(p.ref)
+    if dups:
+        raise ValueError(
+            f"to_schematic: c.parts contains duplicate refs {sorted(set(dups))}.  "
+            f"Reference designators must be unique."
         )
 
-    placed = _place_parts(c, kicad, models_lib_path, layout=layout)
+    target_refs = {p.ref for p in c.parts}
+    target_by_ref = {p.ref: p for p in c.parts}
+
+    # Spice-idempotence requires lib_id agreement on kept refs.  If a ref
+    # exists with a different lib_id than the current Part wants, "keeping"
+    # the old symbol would mean the SPICE netlist uses the old pin map.
+    # Demote these from keep -> remove+add so the new lib_id takes effect.
+    lib_id_mismatch = {
+        ref for ref in (set(existing_by_ref) & target_refs)
+        if existing_by_ref[ref]["lib_id"] != target_by_ref[ref].kicad_lib_id
+    }
+
+    keep_refs    = (set(existing_by_ref) & target_refs) - lib_id_mismatch
+    remove_refs  = (set(existing_by_ref) - target_refs) | lib_id_mismatch
+    add_refs     = (target_refs - set(existing_by_ref)) | lib_id_mismatch
+
+    if mode == "strict" and existing:
+        raise RuntimeError(
+            f"to_schematic(mode='strict'): refusing to run on a schematic "
+            f"with {len(existing)} existing symbols.  Either pass "
+            f"mode='diff' / mode='replace' or clear the schematic first."
+        )
+
+    if mode == "replace":
+        # Delete every existing symbol — clear_routing handles wires/labels.
+        for row in existing:
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"ss.delete_by_kiid({row['kiid']!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"delete_by_kiid({row['kiid']}) failed: "
+                    f"{r.exception_traceback}"
+                )
+        keep_refs, remove_refs = set(), set()
+        add_refs = target_refs
+
+    elif mode == "diff":
+        # Delete refs no longer in the Circuit (plus lib_id-mismatch demotes).
+        for ref in remove_refs:
+            row = existing_by_ref[ref]
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"ss.delete_by_kiid({row['kiid']!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"delete_by_kiid({row['kiid']}) for ref={ref!r} "
+                    f"failed: {r.exception_traceback}"
+                )
+
+    # Always wipe routing — wires/labels/junctions get re-emitted below.
+    # Cheap relative to layout, and the alternative (diffing wire sets)
+    # is its own session.
+    r = kicad.run_python(
+        "import klicad_native_schematic_state as ss; ss.clear_routing()"
+    )
+    if not r.ok:
+        raise RuntimeError(
+            f"clear_routing failed: {r.exception_traceback}"
+        )
+
+    # Place only the new refs; reuse existing kiids for kept refs.
+    skip = {ref: existing_by_ref[ref]["kiid"] for ref in keep_refs}
+    placed = _place_parts(c, kicad, models_lib_path, layout=layout,
+                          skip_refs=skip)
     if route:
         # Phase F router: explicit wires instead of label-coincidence.
         # Power/ground stay label-driven through _place_power_symbols
@@ -355,16 +451,19 @@ def to_schematic(
 
     # Save
     r = kicad.run_python(
-        "import kicad_native_schematic_state as ss; ss.save_schematic()"
+        "import klicad_native_schematic_state as ss; ss.save_schematic()"
     )
     if not r.ok:
         raise RuntimeError(f"save_schematic failed: {r.exception_traceback}")
 
     return {
         "ok":               True,
-        "parts_placed":     len(placed),
+        "parts_placed":     len(placed) - len(keep_refs),  # newly added
+        "parts_kept":       len(keep_refs),
+        "parts_removed":    len(remove_refs),
         "labels_placed":    labeled,
         "wires_placed":     wires,
+        "mode":             mode,
         "sch_path":         str(sch_path),
         "models_lib_path":  str(models_lib_path),
         "project_path":     str(pro_path),
@@ -372,14 +471,22 @@ def to_schematic(
 
 
 def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
-                 layout: str = "sugiyama") -> dict[str, str]:
-    """Place every Part as a SCH_SYMBOL.  Returns ref -> kiid mapping."""
+                 layout: str = "sugiyama",
+                 skip_refs: dict[str, str] | None = None) -> dict[str, str]:
+    """Place every Part as a SCH_SYMBOL.  Returns ref -> kiid mapping.
+
+    skip_refs maps ref -> existing kiid; those refs are NOT re-placed
+    (their on-screen positions and field settings survive untouched).
+    The returned mapping still includes them so the labeler / router
+    can address every Part.
+    """
+    skip_refs = skip_refs or {}
     positions = _layout_positions(c, engine=layout)
-    placed: dict[str, str] = {}
+    placed: dict[str, str] = dict(skip_refs)
     # Part kinds whose model name + library path go into Sim.Name / Sim.Library
     # so KliCAD's SPICE netlist exporter can find the .MODEL card or .SUBCKT.
     # XSubckts are included whenever they carry a per-instance kicad_lib_id.
-    needs_lib = {"NPN", "PNP", "D", "LED", "X"}
+    needs_lib = {"NPN", "PNP", "NMOS", "PMOS", "NJFET", "PJFET", "D", "LED", "X"}
 
     # XSubckt parts without an explicit kicad_lib_id can't be placed —
     # the lookup table has nothing to map them to.  Fail early and clearly.
@@ -396,22 +503,35 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
             f"or use to_spice_deck() if you only need the SPICE side."
         )
 
+    import ast
     for p in c.parts:
-        x, y = positions[p.ref]
-        # For non-DC V/I sources we placed a typed source symbol
-        # (VPULSE/VSIN/...) whose Value field is just a label — don't
-        # overwrite it with the raw SPICE spec string, set Sim.Params
-        # instead (which is what KliCAD's netlist exporter reads).
+        # Spice-idempotence: every Part's fields are reapplied every pass,
+        # whether or not the symbol was placed this pass or in a previous
+        # one.  Position, rotation, custom user fields, footprint — those
+        # all live OUTSIDE this update block and survive because we never
+        # touch them when the ref is in skip_refs.
         is_typed_source = (
             p.kind in ("V", "I")
             and getattr(p, "sim_params", None) is not None
         )
-        snippet = (
-            f"import kicad_native_schematic_state as ss\n"
-            f"sym = ss.add_symbol({p.kicad_lib_id!r}, {p.ref!r}, {x}, {y})\n"
-            f"if not sym.get('ok'): raise RuntimeError(f'add_symbol failed for {p.ref}: ' + str(sym))\n"
-            f"kiid = sym['kiid']\n"
-        )
+        if p.ref in skip_refs:
+            kiid_literal = repr(skip_refs[p.ref])
+            snippet = (
+                f"import klicad_native_schematic_state as ss\n"
+                f"kiid = {kiid_literal}\n"
+            )
+        else:
+            x, y = positions[p.ref]
+            snippet = (
+                f"import klicad_native_schematic_state as ss\n"
+                f"sym = ss.add_symbol({p.kicad_lib_id!r}, {p.ref!r}, {x}, {y})\n"
+                f"if not sym.get('ok'): raise RuntimeError(f'add_symbol failed for {p.ref}: ' + str(sym))\n"
+                f"kiid = sym['kiid']\n"
+            )
+
+        # For non-DC V/I sources, the Value field is a label only — the
+        # actual SPICE stimulus lives in Sim.Params.  Everything else gets
+        # value = p.value (passives) or p.model (actives with no Value).
         if not is_typed_source:
             snippet += (
                 f"value = {(p.value or p.model)!r}\n"
@@ -462,7 +582,6 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
         r = kicad.run_python(snippet)
         if not r.ok:
             raise RuntimeError(f"failed placing {p.ref}: {r.exception_traceback}")
-        import ast
         placed[p.ref] = ast.literal_eval(r.result_repr)
 
     return placed
@@ -485,7 +604,7 @@ def _label_power_pins_only(c: "Circuit", kicad, placed: dict[str, str]) -> int:
                 continue
             kicad_pin_num = p.kicad_pin_map[spice_pin]
             r = kicad.run_python(
-                f"import kicad_native_schematic_state as ss\n"
+                f"import klicad_native_schematic_state as ss\n"
                 f"pos = ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})\n"
                 f"if not pos.get('ok'): raise RuntimeError('pin pos failed: ' + str(pos))\n"
                 f"ss.add_label(pos['x_mm'], pos['y_mm'], {net_name!r})\n"
@@ -504,7 +623,7 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
         for spice_pin, net_name in p.connections.items():
             kicad_pin_num = p.kicad_pin_map[spice_pin]
             r = kicad.run_python(
-                f"import kicad_native_schematic_state as ss\n"
+                f"import klicad_native_schematic_state as ss\n"
                 f"pos = ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})\n"
                 f"if not pos.get('ok'): raise RuntimeError(f'pin pos failed: ' + str(pos))\n"
                 f"ss.add_label(pos['x_mm'], pos['y_mm'], {net_name!r})\n"
@@ -525,7 +644,7 @@ def _place_power_symbols(c: "Circuit", kicad) -> None:
         # Power symbols don't need values/fields set, just a label at the pin
         # so KliCAD sees them as connected to net_name.
         r = kicad.run_python(
-            f"import kicad_native_schematic_state as ss\n"
+            f"import klicad_native_schematic_state as ss\n"
             f"sym = ss.add_symbol({lib_id!r}, '#PWR_{net_name}', {x}, {y})\n"
             f"if not sym.get('ok'): raise RuntimeError('power sym failed: ' + str(sym))\n"
             f"kiid = sym['kiid']\n"

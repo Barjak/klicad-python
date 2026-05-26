@@ -25,7 +25,7 @@ class _SubcktRegistryUnavailable(Exception):
 
 
 def _fetch_subckt_registry(kicad, lib_paths: list[str]) -> dict[str, int]:
-    """Call kicad_native_sim_advanced.parse_subckt_lib for each lib path.
+    """Call klicad_native_sim_advanced.parse_subckt_lib for each lib path.
 
     Returns {subckt_name: pin_count} merged across all libs (last wins on
     duplicate names, matching ngspice's late-binding semantics).
@@ -38,7 +38,7 @@ def _fetch_subckt_registry(kicad, lib_paths: list[str]) -> dict[str, int]:
 
     paths_repr = json.dumps([str(p) for p in lib_paths])
     code = (
-        "import kicad_native_sim_advanced as sa\n"
+        "import klicad_native_sim_advanced as sa\n"
         f"_paths = {paths_repr}\n"
         "_out = {}\n"
         "for _p in _paths:\n"
@@ -56,7 +56,7 @@ def _fetch_subckt_registry(kicad, lib_paths: list[str]) -> dict[str, int]:
         ) from e
     if not r.ok:
         raise _SubcktRegistryUnavailable(
-            f"kicad_native_sim_advanced.parse_subckt_lib failed: "
+            f"klicad_native_sim_advanced.parse_subckt_lib failed: "
             f"{r.exception_traceback or r.stderr or r.stdout}"
         )
     try:
@@ -338,7 +338,7 @@ class Circuit:
 
         # .SUBCKT name + arity check for XSubckt instances.  Delegates to
         # KliCAD's C++ SPICE_LIBRARY_PARSER + SIM_LIBRARY_SPICE via the
-        # kicad_native_sim_advanced.parse_subckt_lib binding — the
+        # klicad_native_sim_advanced.parse_subckt_lib binding — the
         # authoritative source.  Skipped when no KliCAD client is supplied
         # (the only Python-side validation that requires KliCAD).
         x_parts = [p for p in self.parts if getattr(p, "kind", "") == "X"]

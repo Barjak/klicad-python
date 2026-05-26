@@ -296,6 +296,107 @@ class PNP(Part):
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# MOSFETs / JFETs
+#
+# Device:Q_{N,P}MOS uses non-numeric pin "numbers" D/G/S — the KiCad symbol
+# library's convention for active devices.  The default integer pin map
+# would silently bind nothing, so we ship the string-pin map by default.
+# Device:Q_{N,P}JFET_GDS uses 1/2/3 with positional G/D/S meaning per the
+# suffix (1=G, 2=D, 3=S).
+#
+# SPICE: M-element takes four nodes (d g s b).  Bulk defaults to source.
+# ──────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class NMOS(Part):
+    """N-channel MOSFET.  NMOS(ref, *, d, g, s, model='NMOS_S', bulk=None)
+
+    Default model NMOS_S is a Level-1 toy NMOS in STANDARD_MODEL_LIB.
+    Use a vendor `.SUBCKT` via XSubckt for quantitative accuracy.
+    """
+    kind          = "NMOS"
+    spice_letter  = "M"
+    pin_names     = ("d", "g", "s")
+    kicad_lib_id  = "Device:Q_NMOS"
+    kicad_pin_map = {"g": "G", "d": "D", "s": "S"}
+
+    def __init__(self, ref: str, *, d: str, g: str, s: str,
+                 model: str = "NMOS_S", bulk: str | None = None,
+                 footprint: str = ""):
+        super().__init__(ref=ref, value=model, model=model, footprint=footprint)
+        self.connections = {"d": d, "g": g, "s": s}
+        self._bulk = bulk if bulk is not None else s
+
+    def spice_line(self) -> str:
+        from ._spice import _to_spice_net
+        d, g, s = (self.connections[k] for k in ("d", "g", "s"))
+        return f"{self.ref} {d} {g} {s} {_to_spice_net(self._bulk)} {self.model}"
+
+
+@dataclass
+class PMOS(Part):
+    """P-channel MOSFET.  PMOS(ref, *, d, g, s, model='PMOS_S', bulk=None)"""
+    kind          = "PMOS"
+    spice_letter  = "M"
+    pin_names     = ("d", "g", "s")
+    kicad_lib_id  = "Device:Q_PMOS"
+    kicad_pin_map = {"g": "G", "d": "D", "s": "S"}
+
+    def __init__(self, ref: str, *, d: str, g: str, s: str,
+                 model: str = "PMOS_S", bulk: str | None = None,
+                 footprint: str = ""):
+        super().__init__(ref=ref, value=model, model=model, footprint=footprint)
+        self.connections = {"d": d, "g": g, "s": s}
+        self._bulk = bulk if bulk is not None else s
+
+    def spice_line(self) -> str:
+        from ._spice import _to_spice_net
+        d, g, s = (self.connections[k] for k in ("d", "g", "s"))
+        return f"{self.ref} {d} {g} {s} {_to_spice_net(self._bulk)} {self.model}"
+
+
+@dataclass
+class NJFET(Part):
+    """N-channel JFET.  NJFET(ref, *, d, g, s, model=...).
+
+    Pass an explicit model — STANDARD_MODEL_LIB does not ship a default JFET.
+    """
+    kind          = "NJFET"
+    spice_letter  = "J"
+    pin_names     = ("d", "g", "s")
+    kicad_lib_id  = "Device:Q_NJFET_GDS"
+    kicad_pin_map = {"g": "1", "d": "2", "s": "3"}
+
+    def __init__(self, ref: str, *, d: str, g: str, s: str,
+                 model: str, footprint: str = ""):
+        super().__init__(ref=ref, value=model, model=model, footprint=footprint)
+        self.connections = {"d": d, "g": g, "s": s}
+
+    def spice_line(self) -> str:
+        d, g, s = (self.connections[k] for k in ("d", "g", "s"))
+        return f"{self.ref} {d} {g} {s} {self.model}"
+
+
+@dataclass
+class PJFET(Part):
+    """P-channel JFET.  PJFET(ref, *, d, g, s, model=...)."""
+    kind          = "PJFET"
+    spice_letter  = "J"
+    pin_names     = ("d", "g", "s")
+    kicad_lib_id  = "Device:Q_PJFET_GDS"
+    kicad_pin_map = {"g": "1", "d": "2", "s": "3"}
+
+    def __init__(self, ref: str, *, d: str, g: str, s: str,
+                 model: str, footprint: str = ""):
+        super().__init__(ref=ref, value=model, model=model, footprint=footprint)
+        self.connections = {"d": d, "g": g, "s": s}
+
+    def spice_line(self) -> str:
+        d, g, s = (self.connections[k] for k in ("d", "g", "s"))
+        return f"{self.ref} {d} {g} {s} {self.model}"
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Independent sources: V, I
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -509,7 +610,7 @@ class XSubckt(Part):
 # Public registry for from_dict reconstruction + extensibility checks.
 ALL_PARTS: dict[str, type[Part]] = {
     cls.kind: cls
-    for cls in (R, C, L, D, LED, NPN, PNP, V, I, XSubckt)
+    for cls in (R, C, L, D, LED, NPN, PNP, NMOS, PMOS, NJFET, PJFET, V, I, XSubckt)
 }
 
 

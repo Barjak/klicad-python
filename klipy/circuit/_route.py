@@ -119,7 +119,7 @@ def route_signal_nets(c: "Circuit", kicad, placed: dict[str, str]) -> int:
             continue
         for (x1, y1), (x2, y2) in tree_segments:
             r = kicad.run_python(
-                f"import kicad_native_schematic_state as ss\n"
+                f"import klicad_native_schematic_state as ss\n"
                 f"ss.add_wire({x1}, {y1}, {x2}, {y2})\n"
                 f"True"
             )
@@ -143,7 +143,7 @@ def route_signal_nets(c: "Circuit", kicad, placed: dict[str, str]) -> int:
             junction_pts.add((x, y))
         for (x, y) in junction_pts:
             kicad.run_python(
-                f"import kicad_native_schematic_state as ss\n"
+                f"import klicad_native_schematic_state as ss\n"
                 f"ss.add_junction({x}, {y})\nTrue"
             )
     if fallback_label_count:
@@ -160,7 +160,7 @@ def _drop_labels_at_terminals(
     n = 0
     for _ref, x, y in terminals:
         r = kicad.run_python(
-            f"import kicad_native_schematic_state as ss\n"
+            f"import klicad_native_schematic_state as ss\n"
             f"ss.add_label({x}, {y}, {net_name!r})\nTrue"
         )
         if r.ok:
@@ -209,7 +209,7 @@ def _gather_geometry(
         kiid = placed[p.ref]
 
         r = kicad.run_python(
-            f"import kicad_native_schematic_state as ss\n"
+            f"import klicad_native_schematic_state as ss\n"
             f"ss.get_symbol_bbox({kiid!r})"
         )
         if r.ok:
@@ -225,7 +225,7 @@ def _gather_geometry(
         for spice_pin in p.connections:
             kicad_pin_num = p.kicad_pin_map[spice_pin]
             r = kicad.run_python(
-                f"import kicad_native_schematic_state as ss\n"
+                f"import klicad_native_schematic_state as ss\n"
                 f"ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})"
             )
             if not r.ok:

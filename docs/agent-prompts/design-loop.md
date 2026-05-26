@@ -47,8 +47,8 @@ its only contents you need to read are this subdirectory's
 - Python venv: `~/projects/driver-board/.venv/bin/python` — PySpice,
   Playwright, klicad-python are installed.
 - KliCAD binary: `~/.local/bin/klicad` — a dev build with the IPC
-  bindings this workflow needs.  Do NOT use `/usr/bin/kicad`; it
-  lacks the bindings.
+  bindings this workflow needs.  This is the only KiCad/KliCAD
+  binary on the system; use it by that path.
 - Playwright MCP servers exposed under several namespaces
   (`mcp__playwright_iso1__*`, `iso2`, `iso3`, plus the shared one).
   Pick any.  Headed mode is enforced for all; no further configuration
@@ -59,16 +59,16 @@ its only contents you need to read are this subdirectory's
   IDs from the LCSC catalog index at https://www.lcsc.com/products if
   you don't already know the one you need.  No MPN searches except to
   verify a specific candidate.
-- klicad-python: import `kipy`, `kipy.klicad.circuit.Circuit`, etc.
-  `KiCad().is_alive()` is a cheap IPC probe.  `Circuit.run_tran()`
+- klicad-python: import `klipy`, `klipy.circuit.Circuit`, etc.
+  `KliCAD().is_alive()` is a cheap IPC probe.  `Circuit.run_tran()`
   surfaces ngspice stderr if a deck fails to parse — read the
   RuntimeError message before debugging by hand.
 
 **Use KliCAD's own tools, not Python reimplementations.**  ERC, the
 SPICE simulator, symbol library reads, Sim.* field manipulation on
 symbols, schematic placement — all of these live inside KliCAD and
-are reached via `kipy.KiCad().run_python(...)` (against the
-`kicad_native_*` modules) or via klicad-python's wrapper classes
+are reached via `klipy.KliCAD().run_python(...)` (against the
+`klicad_native_*` modules) or via klicad-python's wrapper classes
 which call through the same path.  When you find yourself reaching
 for an offline Python equivalent of any KiCad-side capability, stop
 and use the IPC instead.  Log it in `KLICAD_GAPS.md` if the IPC
@@ -110,7 +110,7 @@ not invoke unstated criteria.
 
 ### Phase 4 — Bring up KliCAD
 
-Launch `~/.local/bin/klicad`.  Confirm `kipy.KiCad().is_alive()`
+Launch `~/.local/bin/klicad`.  Confirm `klipy.KliCAD().is_alive()`
 returns True.  This must succeed before phase 5 — debug the launch
 if it doesn't, don't proceed without it.
 
@@ -133,7 +133,7 @@ Run ERC against the schematic via KliCAD's own ERC binding.  All
 design rules must pass; iterate the build script until they do.
 
 Run a SPICE smoke simulation through KliCAD's simulator binding
-(`kicad_native_simulator`) — not via standalone PySpice — exercising
+(`klicad_native_simulator`) — not via standalone PySpice — exercising
 at least one operating mode end-to-end per REQUIREMENTS.md.  Confirm
 the numerical result is physical: convergence to expected steady
 state within reasonable tolerance, no clamp / breakdown / thermal

@@ -48,6 +48,7 @@ from ._part import (
     R, C, L,
     D, LED,
     NPN, PNP,
+    NMOS, PMOS, NJFET, PJFET,
     V, I,
     XSubckt,
     ALL_PARTS,
@@ -67,7 +68,8 @@ STANDARD_MODEL_LIB: str = str(Path(__file__).parent / "models" / "standard.lib")
 
 __all__ = [
     "Circuit", "NetMeta", "NetKind",
-    "Part", "R", "C", "L", "D", "LED", "NPN", "PNP", "V", "I", "XSubckt",
+    "Part", "R", "C", "L", "D", "LED", "NPN", "PNP",
+    "NMOS", "PMOS", "NJFET", "PJFET", "V", "I", "XSubckt",
     "ModelCard",
     "Analysis", "Tran", "Ac", "Dc", "Op", "Noise", "Control",
     "ALL_PARTS", "ALL_ANALYSES",
