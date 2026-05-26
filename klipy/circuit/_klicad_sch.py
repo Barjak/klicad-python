@@ -63,6 +63,71 @@ _GND_Y  = _ROW_Y + _PART_DY + 4 * _GRID
 # Project bootstrap (files on disk)
 # ──────────────────────────────────────────────────────────────────────────
 
+def _sanitize_subckt_filename(name: str) -> str:
+    """Sub-Circuit name → safe .kicad_sch base.
+
+    Raises ValueError on empty results or if the user name was all-bad
+    characters (the regex collapses to '').
+    """
+    import re
+    out = re.sub(r"[^a-zA-Z0-9_]", "_", name).strip("_")
+    if not out:
+        raise ValueError(
+            f"Sub-Circuit name {name!r} sanitizes to empty — choose a name "
+            f"containing at least one alphanumeric character"
+        )
+    return out
+
+
+def _child_sch_filename(sc_def: "Circuit") -> str:
+    """Stable .kicad_sch filename for a Sub-Circuit definition."""
+    return _sanitize_subckt_filename(sc_def.name) + ".kicad_sch"
+
+
+def _check_sanitization_collisions(sub_defs: list["Circuit"]) -> None:
+    """Two distinct Sub-Circuits whose names sanitize to the same filename
+    would race for the same child .kicad_sch on disk.  Catch early."""
+    seen: dict[str, str] = {}    # sanitized -> original name
+    for sc in sub_defs:
+        sanitized = _sanitize_subckt_filename(sc.name)
+        if sanitized in seen and seen[sanitized] != sc.name:
+            raise ValueError(
+                f"Sub-Circuit name collision after filename sanitization: "
+                f"{seen[sanitized]!r} and {sc.name!r} both produce "
+                f"{sanitized}.kicad_sch.  Rename one of them."
+            )
+        seen[sanitized] = sc.name
+
+
+def _bootstrap_child_sheet_stubs(sub_defs: list["Circuit"],
+                                  proj_dir: Path) -> dict[int, Path]:
+    """Write a .kicad_sch stub for each Sub-Circuit definition (if missing).
+
+    Each stub gets a fresh random UUID so the project can hold multiple
+    children without uuid collisions.  Returns {id(sc_def): Path} so the
+    caller can look up each definition's file.
+
+    Never overwrites an existing child file — that would clobber live
+    in-memory KliCAD state if the schematic is loaded.  KliCAD's
+    save_schematic() writes its in-memory SCH_SCREEN content back when
+    we're done emitting.
+    """
+    import uuid as _uuid
+
+    _check_sanitization_collisions(sub_defs)
+    out: dict[int, Path] = {}
+    for sc in sub_defs:
+        path = proj_dir / _child_sch_filename(sc)
+        if not path.exists():
+            path.write_text(
+                f"(kicad_sch (version 20250114) (generator \"klicad-circuit\")\n"
+                f" (generator_version \"10.99\") (uuid \"{_uuid.uuid4()}\")\n"
+                f" (paper \"A4\") (lib_symbols))\n"
+            )
+        out[id(sc)] = path
+    return out
+
+
 def _bootstrap_project_files(c: "Circuit", sch_path: Path) -> tuple[Path, Path, Path]:
     """Write supporting files (.kicad_pro, sym-lib-table, models.lib).
 
@@ -279,16 +344,27 @@ def to_schematic(
             f"to_schematic: mode must be 'diff' | 'replace' | 'strict', "
             f"got {mode!r}"
         )
+    if c.is_subcircuit:
+        raise ValueError(
+            f"to_schematic: {c.name!r} is a Sub-Circuit definition "
+            f"(ports={c._port_decl}).  Pass the root Circuit; Sub-Circuits "
+            f"are emitted automatically as child .kicad_sch files."
+        )
+
     from klipy import KliCAD
     from klipy.errors import ConnectionError as KipyConnectionError
+    from ._spice import _reachable_subcircuit_defs
 
     # Phase 1 — offline shell.  Always-succeeds; ensures the project tree
-    # exists on disk before the IPC step that may fail.
+    # + every child .kicad_sch stub exists on disk before the IPC step.
     shell = write_project_shell(c, sch_path)
     sch_path = Path(shell["sch_path"])
     pro_path = Path(shell["project_path"])
     sym_lib_table_path = Path(shell["sym_lib_table_path"])
     models_lib_path = Path(shell["models_lib_path"])
+    proj_dir = sch_path.parent
+    sub_defs = _reachable_subcircuit_defs(c)
+    sub_to_filename = _bootstrap_child_sheet_stubs(sub_defs, proj_dir)
 
     # Phase 2 — IPC-bound placement.
     if kicad is None:
@@ -308,14 +384,10 @@ def to_schematic(
                 f"underlying error: {e}"
             ) from e
 
-    # The KliCAD instance must already be loaded on this project — load
-    # otherwise (subject to schematic-switch crash if a different project
-    # is already open).
     pre = kicad.run_python(
         "import klicad_native_project_manager as pm; pm.get_current_project()"
     )
     if pre.ok and pro_path.name in pre.result_repr:
-        # Already loaded.
         pass
     else:
         r = kicad.run_python(
@@ -327,7 +399,6 @@ def to_schematic(
                 f"failed to load_project({pro_path}): {r.exception_traceback}"
             )
 
-    # Open the schematic.
     r = kicad.run_python(
         "import klicad_native_gui as g; g.show_frame('schematic')\n"
         f"import klicad_native_schematic_state as ss\n"
@@ -336,28 +407,142 @@ def to_schematic(
     if not r.ok:
         raise RuntimeError(f"open_schematic failed: {r.exception_traceback}")
 
-    # Enumerate existing symbols on the schematic.  list_symbols returns
-    # one dict per placed SCH_SYMBOL with kiid + reference + lib_id +
-    # position; we key by ref because that's the user-facing identity
-    # that survives across re-runs of the build script.
+    # Make sure we start emission on the root sheet.  pop_sheet repeatedly
+    # until depth==0; defensive against stale GUI navigation state.
+    _navigate_to_root(kicad)
+
+    # Validate target uniqueness in c.parts before anything mutates state.
+    _check_dup_refs(c)
+
+    # Emit the root sheet.
+    root_result = _emit_one_sheet(c, kicad, models_lib_path, mode=mode,
+                                   layout=layout, route=route,
+                                   sub_to_filename=sub_to_filename,
+                                   is_root=True)
+
+    # Emit each Sub-Circuit body into its child sheet.  Each definition
+    # gets visited once; multi-instance Sub-Circuits share a SCH_SCREEN
+    # via add_sheet's screen-sharing logic (KiCad complex-hierarchy).
+    sub_results: list[dict] = []
+    for sc_def in sub_defs:
+        # Find any SCH_SHEET on root pointing at this Sub-Circuit's file,
+        # push into it.  (Screen-sharing means there's exactly one
+        # SCH_SCREEN per file regardless of instance count.)
+        child_filename = sub_to_filename[id(sc_def)].name
+        sheet_kiid = _find_root_sheet_with_filename(kicad, child_filename)
+        if sheet_kiid is None:
+            raise RuntimeError(
+                f"to_schematic: no root SCH_SHEET found for child "
+                f"{child_filename!r}; expected one was placed in the root "
+                f"emit pass.  This is an internal sequencing bug."
+            )
+        r = kicad.run_python(
+            f"import klicad_native_hierarchy as h; "
+            f"h.push_sheet({sheet_kiid!r})"
+        )
+        if not r.ok:
+            raise RuntimeError(
+                f"push_sheet({sheet_kiid}) failed: {r.exception_traceback}"
+            )
+        try:
+            sub_result = _emit_one_sheet(sc_def, kicad, models_lib_path,
+                                          mode=mode, layout=layout,
+                                          route=route,
+                                          sub_to_filename=sub_to_filename,
+                                          is_root=False)
+            sub_results.append(sub_result)
+        finally:
+            kicad.run_python(
+                "import klicad_native_hierarchy as h; h.pop_sheet()"
+            )
+
+    # Annotation: only run when hierarchy is present.  KiCad's per-path
+    # symbol-instance bookkeeping (so U1/Q1 vs U2/Q1 are distinct in the
+    # netlist) depends on annotate running across the hierarchy.  For
+    # flat schematics, the user-supplied ref designators are already
+    # complete — running annotate(aResetAnnotation=true) would
+    # renumber them and break the contract that code owns ref names.
+    if sub_defs:
+        r = kicad.run_python(
+            "import klicad_native_annotation as a; a.annotate(scope='all')"
+        )
+        if not r.ok:
+            # Annotation failure shouldn't abort — the schematic is
+            # still well-formed structurally.  Warn but continue.
+            import sys
+            sys.stderr.write(
+                f"[to_schematic] annotation failed (continuing): "
+                f"{r.exception_traceback}\n"
+            )
+
+    # Save once for the whole hierarchy.
     r = kicad.run_python(
-        "import klicad_native_schematic_state as ss; ss.list_symbols()"
+        "import klicad_native_schematic_state as ss; ss.save_schematic()"
+    )
+    if not r.ok:
+        raise RuntimeError(f"save_schematic failed: {r.exception_traceback}")
+
+    # Aggregate result: roll up child-sheet counts into the top-level dict
+    # so downstream callers see the totals across the hierarchy.
+    def _sum(key: str) -> int:
+        return root_result.get(key, 0) + sum(s.get(key, 0) for s in sub_results)
+
+    return {
+        "ok":              True,
+        "parts_placed":    _sum("parts_placed"),
+        "parts_kept":      _sum("parts_kept"),
+        "parts_removed":   _sum("parts_removed"),
+        "sheets_placed":   root_result.get("sheets_placed", 0),
+        "sheets_kept":     root_result.get("sheets_kept", 0),
+        "sheets_removed":  root_result.get("sheets_removed", 0),
+        "labels_placed":   _sum("labels_placed"),
+        "wires_placed":    _sum("wires_placed"),
+        "mode":            mode,
+        "sch_path":        str(sch_path),
+        "models_lib_path": str(models_lib_path),
+        "project_path":    str(pro_path),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Per-sheet emit (used for root and each child)
+# ──────────────────────────────────────────────────────────────────────────
+
+def _navigate_to_root(kicad) -> None:
+    """Pop sheets until depth == 0.  No-op if already on root."""
+    import ast
+    for _ in range(64):                    # depth-bounded safety
+        r = kicad.run_python(
+            "import klicad_native_hierarchy as h; h.get_current_sheet()"
+        )
+        if not r.ok:
+            raise RuntimeError(
+                f"_navigate_to_root: get_current_sheet failed: "
+                f"{r.exception_traceback}"
+            )
+        cur = ast.literal_eval(r.result_repr)
+        if int(cur.get("depth", 0)) == 0:
+            return
+        kicad.run_python(
+            "import klicad_native_hierarchy as h; h.pop_sheet()"
+        )
+    raise RuntimeError("_navigate_to_root: depth > 64; possible loop")
+
+
+def _current_sheet_path(kicad) -> str:
+    """Return the current sheet's KIID-based path_string."""
+    import ast
+    r = kicad.run_python(
+        "import klicad_native_hierarchy as h; h.get_current_sheet()"
     )
     if not r.ok:
         raise RuntimeError(
-            f"to_schematic: list_symbols failed: {r.exception_traceback}"
+            f"_current_sheet_path: {r.exception_traceback}"
         )
-    import ast
-    existing = ast.literal_eval(r.result_repr)
-    # Filter out power-flag symbols (KiCad convention: ref prefixed with '#').
-    # _place_power_symbols emits them every pass; they're not in c.parts and
-    # would otherwise read as "needs removal" on every diff iteration.
-    existing = [row for row in existing if not row["ref"].startswith("#")]
-    existing_by_ref = {row["ref"]: row for row in existing}
+    return ast.literal_eval(r.result_repr)["path_string"]
 
-    # Validate: a circuit with duplicate refs has ambiguous identity under
-    # diff/apply (which symbol does "R1" point at when the build script
-    # declares it twice?).  Catch this early with a clear error.
+
+def _check_dup_refs(c: "Circuit") -> None:
     seen = set()
     dups = []
     for p in c.parts:
@@ -366,35 +551,121 @@ def to_schematic(
         seen.add(p.ref)
     if dups:
         raise ValueError(
-            f"to_schematic: c.parts contains duplicate refs {sorted(set(dups))}.  "
-            f"Reference designators must be unique."
+            f"to_schematic: c.parts contains duplicate refs "
+            f"{sorted(set(dups))}.  Reference designators must be unique."
         )
 
-    target_refs = {p.ref for p in c.parts}
-    target_by_ref = {p.ref: p for p in c.parts}
 
-    # Spice-idempotence requires lib_id agreement on kept refs.  If a ref
-    # exists with a different lib_id than the current Part wants, "keeping"
-    # the old symbol would mean the SPICE netlist uses the old pin map.
-    # Demote these from keep -> remove+add so the new lib_id takes effect.
+def _find_root_sheet_with_filename(kicad, filename: str) -> str | None:
+    """Return the KIID of the first root-level SCH_SHEET whose file_name
+    matches `filename`, or None if none exists."""
+    import ast
+    r = kicad.run_python(
+        "import klicad_native_hierarchy as h; h.list_sheets()"
+    )
+    if not r.ok:
+        raise RuntimeError(
+            f"_find_root_sheet_with_filename: {r.exception_traceback}"
+        )
+    for row in ast.literal_eval(r.result_repr):
+        if int(row.get("depth", 0)) == 1 and row.get("file_name") == filename:
+            return row["uuid"]
+    return None
+
+
+def _emit_one_sheet(c: "Circuit",
+                     kicad,
+                     models_lib_path: Path,
+                     *,
+                     mode: str,
+                     layout: str,
+                     route: bool,
+                     sub_to_filename: dict[int, Path],
+                     is_root: bool) -> dict:
+    """Author one sheet's content under the current KliCAD sheet path.
+
+    Returns a per-sheet diff result dict.  Caller is responsible for
+    set_current_sheet navigation; this function operates on whatever
+    sheet is currently active.
+
+    For root sheets, sheet instances in c.parts get placed via
+    _place_sheet_instances + _add_sheet_pins.  For child sheets, c
+    is a Sub-Circuit definition and we additionally emit hier-label
+    port anchors.
+    """
+    import ast
+
+    sheet_path = _current_sheet_path(kicad)
+
+    # Existing scalar symbols on THIS sheet only.
+    r = kicad.run_python(
+        f"import klicad_native_schematic_state as ss\n"
+        f"ss.list_symbols({sheet_path!r})"
+    )
+    if not r.ok:
+        raise RuntimeError(
+            f"_emit_one_sheet: list_symbols failed: {r.exception_traceback}"
+        )
+    existing = ast.literal_eval(r.result_repr)
+    # Filter out power-flag symbols (KiCad #PWR_*).
+    existing = [row for row in existing if not row["ref"].startswith("#")]
+    existing_by_ref = {row["ref"]: row for row in existing}
+
+    # Existing root-level SCH_SHEET instances (only on root; child sheets
+    # don't contain sub-sheets in H2 — nesting is H4).
+    existing_sheets_by_ref: dict[str, dict] = {}
+    if is_root:
+        r = kicad.run_python(
+            "import klicad_native_hierarchy as h; h.list_sheets()"
+        )
+        if r.ok:
+            for row in ast.literal_eval(r.result_repr):
+                if int(row.get("depth", 0)) == 1:
+                    existing_sheets_by_ref[row["name"]] = row
+
+    # Target sets — scalar parts vs sheet instances.
+    scalar_parts = [p for p in c.parts if p.kind != "SUBCIRCUIT"]
+    sheet_parts  = [p for p in c.parts if p.kind == "SUBCIRCUIT"]
+    target_refs        = {p.ref for p in scalar_parts}
+    target_by_ref      = {p.ref: p for p in scalar_parts}
+    target_sheet_refs  = {p.ref for p in sheet_parts}
+    target_sheet_by_ref = {p.ref: p for p in sheet_parts}
+
+    # ── Scalar-symbol diff (existing semantics) ──────────────────────────
     lib_id_mismatch = {
         ref for ref in (set(existing_by_ref) & target_refs)
-        if existing_by_ref[ref]["lib_id"] != target_by_ref[ref].kicad_lib_id
+        if existing_by_ref[ref].get("lib_id") != target_by_ref[ref].kicad_lib_id
     }
-
     keep_refs    = (set(existing_by_ref) & target_refs) - lib_id_mismatch
     remove_refs  = (set(existing_by_ref) - target_refs) | lib_id_mismatch
-    add_refs     = (target_refs - set(existing_by_ref)) | lib_id_mismatch
 
-    if mode == "strict" and existing:
+    # ── Sheet-instance diff (root only) ──────────────────────────────────
+    keep_sheet_refs:   set[str] = set()
+    remove_sheet_refs: set[str] = set()
+    if is_root:
+        # Demotion key: ref must match AND child file_name must match.
+        # H3 will refine to per-pin diff; H2 placeholder is whole-sheet
+        # remove+add on any port-set difference.
+        for ref in (set(existing_sheets_by_ref) & target_sheet_refs):
+            tgt = target_sheet_by_ref[ref]
+            tgt_file = sub_to_filename[id(tgt.definition)].name
+            if existing_sheets_by_ref[ref].get("file_name") == tgt_file:
+                keep_sheet_refs.add(ref)
+            else:
+                remove_sheet_refs.add(ref)
+        # Refs in existing but not in target → remove.
+        remove_sheet_refs |= (set(existing_sheets_by_ref) - target_sheet_refs)
+
+    if mode == "strict" and (existing or existing_sheets_by_ref):
         raise RuntimeError(
-            f"to_schematic(mode='strict'): refusing to run on a schematic "
-            f"with {len(existing)} existing symbols.  Either pass "
-            f"mode='diff' / mode='replace' or clear the schematic first."
+            f"to_schematic(mode='strict'): refusing to run on a sheet "
+            f"with {len(existing)} existing symbols and "
+            f"{len(existing_sheets_by_ref)} existing sheet instances.  "
+            f"Pass mode='diff' / mode='replace' or clear the sheet first."
         )
 
     if mode == "replace":
-        # Delete every existing symbol — clear_routing handles wires/labels.
+        # Wipe both symbols and root sheets on this sheet.
         for row in existing:
             r = kicad.run_python(
                 f"import klicad_native_schematic_state as ss\n"
@@ -405,11 +676,22 @@ def to_schematic(
                     f"delete_by_kiid({row['kiid']}) failed: "
                     f"{r.exception_traceback}"
                 )
-        keep_refs, remove_refs = set(), set()
-        add_refs = target_refs
+        for row in existing_sheets_by_ref.values():
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"ss.delete_by_kiid({row['uuid']!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"delete_by_kiid({row['uuid']}) failed: "
+                    f"{r.exception_traceback}"
+                )
+        keep_refs, remove_refs = set(), set(existing_by_ref)
+        keep_sheet_refs, remove_sheet_refs = set(), set(existing_sheets_by_ref)
+        existing_by_ref = {}
+        existing_sheets_by_ref = {}
 
     elif mode == "diff":
-        # Delete refs no longer in the Circuit (plus lib_id-mismatch demotes).
         for ref in remove_refs:
             row = existing_by_ref[ref]
             r = kicad.run_python(
@@ -421,52 +703,84 @@ def to_schematic(
                     f"delete_by_kiid({row['kiid']}) for ref={ref!r} "
                     f"failed: {r.exception_traceback}"
                 )
+        for ref in remove_sheet_refs:
+            row = existing_sheets_by_ref[ref]
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"ss.delete_by_kiid({row['uuid']!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"delete_by_kiid({row['uuid']}) for sheet ref={ref!r} "
+                    f"failed: {r.exception_traceback}"
+                )
 
-    # Always wipe routing — wires/labels/junctions get re-emitted below.
-    # Cheap relative to layout, and the alternative (diffing wire sets)
-    # is its own session.
+    # Wipe routing on THIS sheet.  Scoped via the sheet_path arg.
     r = kicad.run_python(
-        "import klicad_native_schematic_state as ss; ss.clear_routing()"
+        f"import klicad_native_schematic_state as ss\n"
+        f"ss.clear_routing({sheet_path!r})"
     )
     if not r.ok:
         raise RuntimeError(
             f"clear_routing failed: {r.exception_traceback}"
         )
 
-    # Place only the new refs; reuse existing kiids for kept refs.
-    skip = {ref: existing_by_ref[ref]["kiid"] for ref in keep_refs}
+    # Place scalar parts on this sheet (skipping kept refs).
+    skip = {ref: existing_by_ref[ref]["kiid"]
+            for ref in keep_refs if ref in existing_by_ref}
     placed = _place_parts(c, kicad, models_lib_path, layout=layout,
                           skip_refs=skip)
+
+    # Place sheet instances (root only) — H2 single-level.
+    sheet_kiids: dict[str, str] = {}
+    if is_root:
+        sheet_skip = {ref: existing_sheets_by_ref[ref]["uuid"]
+                      for ref in keep_sheet_refs}
+        positions = _layout_positions(c, engine=layout)
+        sheet_kiids = _place_sheet_instances(c, kicad, sub_to_filename,
+                                              positions, sheet_skip)
+        # Merge sheet kiids into `placed` so _label_pins's SUBCIRCUIT
+        # branch can find them.
+        placed.update(sheet_kiids)
+        # _add_sheet_pins needs the (x, y) origin of each placed sheet
+        # to compute pin positions on the sheet's perimeter.
+        sheet_positions = {
+            p.ref: positions[p.ref]
+            for p in c.parts if p.kind == "SUBCIRCUIT"
+        }
+        _add_sheet_pins(c, kicad, sheet_kiids, sheet_positions)
+
+    # Emit hier-label anchors for ports on a child sheet (one per port).
+    if not is_root and c.is_subcircuit:
+        _emit_port_anchors(c, kicad, models_lib_path)
+
+    # Labels / routing.
     if route:
-        # Phase F router: explicit wires instead of label-coincidence.
-        # Power/ground stay label-driven through _place_power_symbols
-        # because routing them would dominate the sheet visually.
         from ._route import route_signal_nets
         labeled = _label_power_pins_only(c, kicad, placed)
         wires = route_signal_nets(c, kicad, placed)
     else:
         labeled = _label_pins(c, kicad, placed)
         wires = 0
+
     _place_power_symbols(c, kicad)
 
-    # Save
-    r = kicad.run_python(
-        "import klicad_native_schematic_state as ss; ss.save_schematic()"
-    )
-    if not r.ok:
-        raise RuntimeError(f"save_schematic failed: {r.exception_traceback}")
-
     return {
-        "ok":               True,
-        "parts_placed":     len(placed) - len(keep_refs),  # newly added
-        "parts_kept":       len(keep_refs),
-        "parts_removed":    len(remove_refs),
-        "labels_placed":    labeled,
-        "wires_placed":     wires,
-        "mode":             mode,
-        "sch_path":         str(sch_path),
-        "models_lib_path":  str(models_lib_path),
-        "project_path":     str(pro_path),
+        "ok":              True,
+        "sheet_path":      sheet_path,
+        "parts_placed":    sum(
+            1 for p in c.parts
+            if p.kind != "SUBCIRCUIT" and p.ref not in keep_refs
+        ),
+        "parts_kept":      len(keep_refs),
+        "parts_removed":   len(remove_refs),
+        "sheets_placed":   sum(
+            1 for ref in target_sheet_refs if ref not in keep_sheet_refs
+        ) if is_root else 0,
+        "sheets_kept":     len(keep_sheet_refs),
+        "sheets_removed":  len(remove_sheet_refs),
+        "labels_placed":   labeled,
+        "wires_placed":    wires,
     }
 
 
@@ -505,6 +819,10 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
 
     import ast
     for p in c.parts:
+        # Sheet instances follow a different placement path — see
+        # _place_sheet_instances.  Don't try to add_symbol them.
+        if p.kind == "SUBCIRCUIT":
+            continue
         # Spice-idempotence: every Part's fields are reapplied every pass,
         # whether or not the symbol was placed this pass or in a previous
         # one.  Position, rotation, custom user fields, footprint — those
@@ -616,10 +934,55 @@ def _label_power_pins_only(c: "Circuit", kicad, placed: dict[str, str]) -> int:
 
 
 def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
-    """Drop a text label at every pin coordinate.  Returns count placed."""
+    """Drop a text label at every pin coordinate.  Returns count placed.
+
+    Symbols and sheet instances both flow through this, with different
+    pin-position resolvers.  For symbols: `get_symbol_pin_position(kiid,
+    kicad_pin_num)`.  For sheet instances (kind == "SUBCIRCUIT"): the
+    SCH_SHEET_PIN positions come from `klicad_native_hierarchy.list_sheet_pins`.
+    """
+    import ast
     n = 0
     for p in c.parts:
         kiid = placed[p.ref]
+
+        if p.kind == "SUBCIRCUIT":
+            # Sheet instance — pin positions come from the SCH_SHEET_PIN
+            # items on this sheet.  list_sheet_pins gives name -> (x, y).
+            r = kicad.run_python(
+                f"import klicad_native_hierarchy as h\n"
+                f"h.list_sheet_pins({kiid!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"list_sheet_pins({kiid}) failed: {r.exception_traceback}"
+                )
+            sheet_pins = ast.literal_eval(r.result_repr)
+            pin_pos = {row["name"]: (row["x_mm"], row["y_mm"])
+                       for row in sheet_pins}
+            # For SubcircuitInstance, p.pin_names == p.connections.keys() ==
+            # expanded port list; the net is the external binding.
+            for port_name, net_name in p.connections.items():
+                if port_name not in pin_pos:
+                    # Port hasn't been pinned yet — happens during placement
+                    # before _add_sheet_pins runs.  Skip this iteration; the
+                    # next pass will see it.
+                    continue
+                x, y = pin_pos[port_name]
+                r = kicad.run_python(
+                    f"import klicad_native_schematic_state as ss\n"
+                    f"ss.add_label({x}, {y}, {net_name!r})\n"
+                    f"True"
+                )
+                if not r.ok:
+                    raise RuntimeError(
+                        f"failed labelling sheet {p.ref} pin {port_name!r} "
+                        f"as {net_name}: {r.exception_traceback}"
+                    )
+                n += 1
+            continue
+
+        # Symbol path (existing).
         for spice_pin, net_name in p.connections.items():
             kicad_pin_num = p.kicad_pin_map[spice_pin]
             r = kicad.run_python(
@@ -635,6 +998,165 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
                     f"{r.exception_traceback}"
                 )
             n += 1
+    return n
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Sheet placement (H2 — hierarchical schematics)
+# ──────────────────────────────────────────────────────────────────────────
+
+# H2 placeholder sheet dimensions.  H5 will replace with bbox-aware layout.
+_SHEET_W = 12 * _GRID    # 30.48 mm
+_SHEET_PIN_DY = 2 * _GRID  # 5.08 mm per pin
+_SHEET_PIN_INSET = 2 * _GRID  # offset from top edge
+
+
+def _sheet_size_for(sc_def: "Circuit") -> tuple[float, float]:
+    """Compute the (w, h) bbox for a sheet instance of `sc_def`.
+
+    Width is fixed for H2 (no name-length-aware sizing yet).  Height
+    scales with port count so all pins fit on one edge.
+    """
+    n_pins = len(sc_def._ports_expanded)
+    h = max(4 * _GRID, _SHEET_PIN_INSET * 2 + n_pins * _SHEET_PIN_DY)
+    return (_SHEET_W, h)
+
+
+def _sheet_pin_layout(sc_def: "Circuit", sheet_x: float, sheet_y: float
+                       ) -> list[tuple[str, str, float, float]]:
+    """Compute (name, side, x_mm, y_mm) for each port on a sheet instance.
+
+    H2 placeholder: all pins on the LEFT edge, evenly spaced from top.
+    Positions are absolute on the parent canvas (sheet_x + 0, sheet_y +
+    inset + i * dy).  H5 will replace with smarter placement that
+    considers child sheet topology.
+    """
+    out: list[tuple[str, str, float, float]] = []
+    for i, port_name in enumerate(sc_def._ports_expanded):
+        x = sheet_x
+        y = sheet_y + _SHEET_PIN_INSET + i * _SHEET_PIN_DY
+        out.append((port_name, "left", x, y))
+    return out
+
+
+def _place_sheet_instances(c: "Circuit", kicad,
+                            sub_to_filename: dict[int, Path],
+                            positions: dict[str, tuple[float, float]],
+                            skip_refs: dict[str, str]) -> dict[str, str]:
+    """Add SCH_SHEET items for every SubcircuitInstance in c.parts.
+
+    Returns ref -> sheet kiid mapping (including skipped/kept refs so
+    downstream labelers/routers can address every instance).  Sheet
+    pins are emitted by _add_sheet_pins after placement.
+    """
+    import ast
+    placed: dict[str, str] = dict(skip_refs)
+    for p in c.parts:
+        if p.kind != "SUBCIRCUIT":
+            continue
+        if p.ref in skip_refs:
+            continue
+        sc_def = p.definition
+        filename = sub_to_filename[id(sc_def)].name   # bare name, not full path
+        w, h = _sheet_size_for(sc_def)
+        x, y = positions[p.ref]
+        snippet = (
+            f"import klicad_native_schematic_state as ss\n"
+            f"r = ss.add_sheet({p.ref!r}, {filename!r}, {x}, {y}, {w}, {h})\n"
+            f"if not r.get('ok'): raise RuntimeError(f'add_sheet failed for {p.ref}: ' + str(r))\n"
+            f"r['kiid']"
+        )
+        r = kicad.run_python(snippet)
+        if not r.ok:
+            raise RuntimeError(
+                f"failed placing sheet instance {p.ref}: {r.exception_traceback}"
+            )
+        placed[p.ref] = ast.literal_eval(r.result_repr)
+    return placed
+
+
+def _add_sheet_pins(c: "Circuit", kicad,
+                     sheet_kiids: dict[str, str],
+                     sheet_positions: dict[str, tuple[float, float]]) -> int:
+    """Add SCH_SHEET_PINs to every freshly-placed SubcircuitInstance.
+
+    sheet_positions[ref] gives the (x, y) origin of the SCH_SHEET on
+    the parent canvas — used to compute pin positions on the sheet's
+    left edge, inset from the top.
+
+    Skips refs whose pins already exist (kept from a prior diff pass).
+    Returns the number of pins added.
+    """
+    import ast
+    n = 0
+    for p in c.parts:
+        if p.kind != "SUBCIRCUIT":
+            continue
+        sheet_kiid = sheet_kiids[p.ref]
+        # Check if pins already exist on this sheet (kept from prior pass).
+        r = kicad.run_python(
+            f"import klicad_native_hierarchy as h\n"
+            f"h.list_sheet_pins({sheet_kiid!r})"
+        )
+        if r.ok:
+            existing_pins = ast.literal_eval(r.result_repr)
+            if existing_pins:
+                # Already pinned (kept ref).  H3 will refine per-pin diff.
+                continue
+
+        x_origin, y_origin = sheet_positions[p.ref]
+        for i, port_name in enumerate(p.pin_names):
+            # H2 placeholder: left edge of the sheet, evenly spaced
+            # from top.  KliCAD constrains pin positions to lie on the
+            # sheet's perimeter; we pre-position rather than rely on
+            # any post-hoc snap.
+            x_mm = x_origin
+            y_mm = y_origin + _SHEET_PIN_INSET + i * _SHEET_PIN_DY
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"r = ss.add_sheet_pin({sheet_kiid!r}, {port_name!r}, "
+                f"'left', {x_mm}, {y_mm})\n"
+                f"if not r.get('ok'): raise RuntimeError('add_sheet_pin failed: ' + str(r))\n"
+                f"True"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"failed pinning sheet {p.ref} port {port_name!r}: "
+                    f"{r.exception_traceback}"
+                )
+            n += 1
+    return n
+
+
+def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> int:
+    """Inside a child sheet, place ONE hierarchical label per port.
+
+    KliCAD's net resolver merges any local label inside the body that
+    names the same port-net into the hier-label by name-coincidence.
+    Position doesn't matter for netlist; we use the same left-edge
+    layout as the parent's sheet pins so the schematic reads coherently.
+
+    Caller must have set_current_sheet to the child before invoking.
+    """
+    n = 0
+    for i, port_name in enumerate(sc_def._ports_expanded):
+        # Anchor at a fixed offset on the canvas; user can reposition
+        # post-hoc (we won't move it on subsequent diffs since labels
+        # are wiped by clear_routing).
+        x = 4 * _GRID
+        y = 4 * _GRID + i * _SHEET_PIN_DY
+        r = kicad.run_python(
+            f"import klicad_native_schematic_state as ss\n"
+            f"r = ss.add_label({x}, {y}, {port_name!r}, kind='hierarchical')\n"
+            f"if not r.get('ok'): raise RuntimeError('hier label failed: ' + str(r))\n"
+            f"True"
+        )
+        if not r.ok:
+            raise RuntimeError(
+                f"failed emitting port anchor for {sc_def.name}:{port_name!r}: "
+                f"{r.exception_traceback}"
+            )
+        n += 1
     return n
 
 
