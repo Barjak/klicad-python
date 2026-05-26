@@ -1,4 +1,4 @@
-"""Phase A acceptance test for klipy.klicad.circuit.
+"""Phase A acceptance test for klipy.circuit.
 
 Verifies:
   1. The Python DSL builds a Circuit object without errors.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from klipy.klicad.circuit import (
+from klipy.circuit import (
     Circuit,
     R, C, NPN, LED, V, D, L, XSubckt,
     ModelCard,
@@ -279,7 +279,7 @@ def test_to_schematic_rejects_bare_xsubckt():
     """Without kicad_lib_id, schematic placement raises NotImplementedError
     (the runtime path that prior code already exercised, plus a clearer
     message)."""
-    from klipy.klicad.circuit._klicad_sch import _place_parts
+    from klipy.circuit._klicad_sch import _place_parts
     c = Circuit(name="t", desc="")
     c.add(XSubckt("U1", ["A", "B"], subckt="UNDEF"))
     # Don't need a live KliCAD to hit the early raise.
@@ -295,7 +295,7 @@ def test_to_schematic_snippet_for_xsubckt(monkeypatch, tmp_path):
     sending it to a live KliCAD; that lets us inspect the generated
     code without requiring a running session.
     """
-    from klipy.klicad.circuit._klicad_sch import _place_parts
+    from klipy.circuit._klicad_sch import _place_parts
 
     c = Circuit(name="t", desc="")
     c.add(XSubckt(
@@ -473,7 +473,7 @@ def test_self_running_false_omits_control():
 # ---- write_project_shell (offline half of to_schematic) ----------------
 
 def test_write_project_shell_writes_files(tmp_path):
-    from klipy.klicad.circuit._klicad_sch import write_project_shell
+    from klipy.circuit._klicad_sch import write_project_shell
     c = build_led_oscillator()
     sch = tmp_path / "led_osc.kicad_sch"
     out = write_project_shell(c, sch)
@@ -486,7 +486,7 @@ def test_write_project_shell_writes_files(tmp_path):
 
 def test_write_project_shell_no_kicad_needed(tmp_path):
     """Offline call must not attempt any IPC."""
-    from klipy.klicad.circuit._klicad_sch import write_project_shell
+    from klipy.circuit._klicad_sch import write_project_shell
     c = Circuit("tiny")
     c.add(R("R1", "A", "0", "1k"))
     c.add(R("R2", "A", "B", "1k"))

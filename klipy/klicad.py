@@ -94,7 +94,7 @@ class KliCADVersion:
         self.full_version = full_version
 
     @staticmethod
-    def from_proto(proto: base_types_pb2.KliCADVersion) -> 'KliCADVersion':
+    def from_proto(proto: base_types_pb2.KiCadVersion) -> 'KliCADVersion':
         return KliCADVersion(proto.major, proto.minor, proto.patch, proto.full_version)
 
     @staticmethod

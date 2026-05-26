@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from klipy import KliCAD
-from klipy.klicad.circuit import (
+from klipy.circuit import (
     Circuit,
     R, C, NPN, LED, V,
     Tran,
@@ -64,7 +64,7 @@ def build_circuit() -> Circuit:
 
 def setup_only(c: Circuit) -> None:
     """Lay down the project + supporting files; don't connect to KliCAD."""
-    from klipy.klicad.circuit._klicad_sch import _bootstrap_project_files
+    from klipy.circuit._klicad_sch import _bootstrap_project_files
     pro_path, sym_lib, models_lib = _bootstrap_project_files(c, SCH_FILE)
     print(f"[setup] wrote project files in {PROJ_DIR}/")
     print(f"        - {pro_path.name}")

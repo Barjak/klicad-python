@@ -1,4 +1,4 @@
-"""klipy.klicad.circuit — canonical circuit descriptions.
+"""klipy.circuit — canonical circuit descriptions.
 
 A Circuit is a Python object that fully describes an electrical circuit:
 parts, named nets connecting them, initial conditions, and analyses to run.
@@ -13,8 +13,8 @@ divergence by construction.
 
 Example:
 
-    from klipy.klicad.circuit import Circuit, R, C, NPN, LED, V, Tran
-    from klipy.klicad.circuit import STANDARD_MODEL_LIB
+    from klipy.circuit import Circuit, R, C, NPN, LED, V, Tran
+    from klipy.circuit import STANDARD_MODEL_LIB
 
     c = Circuit("LED Oscillator", desc="2-transistor astable multivibrator")
     c.add_model_lib(STANDARD_MODEL_LIB)

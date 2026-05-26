@@ -144,7 +144,7 @@ For PRs that touch `kipy/klicad/`:
   invokes, per the "🟡 Pragmatic exceptions" section).
 - If the change adds Python code that *could* live on the C++ side, the
   PR description must justify the choice and link to the equivalent
-  C++ work (filed as a TODO or as an issue against the kicad submodule).
+  C++ work (filed as a TODO or as an issue on the KliCAD repo).
 - Tests should reflect what changes — if you're moving logic to C++,
   the Python tests for the old logic should be removed or replaced
   with tests of the IPC integration, not left in place.

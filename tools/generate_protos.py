@@ -64,7 +64,7 @@ def generate_protos(input_path: str, output_path: str, protoc: str = _default_pr
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--input", default="kicad/api/proto")
+    parser.add_argument("--input", default="proto-src")
     parser.add_argument("--output", default="klipy/proto")
     parser.add_argument("--protoc", help="Path to protoc", default=_default_protoc)
     parser.add_argument("--protol", help="Path to protoletariat", default=_default_protol)

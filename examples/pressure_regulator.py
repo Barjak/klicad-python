@@ -49,7 +49,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent.parent))
 
-from klipy.klicad.circuit import (
+from klipy.circuit import (
     Circuit, R, C, L, D, NPN, V, Tran, STANDARD_MODEL_LIB,
 )
 
@@ -190,7 +190,7 @@ def main() -> int:
     args.proj_dir.mkdir(parents=True, exist_ok=True)
     sch_path = args.proj_dir / f"{args.proj_dir.name}.kicad_sch"
     if args.setup_only:
-        from klipy.klicad.circuit._klicad_sch import _bootstrap_project_files
+        from klipy.circuit._klicad_sch import _bootstrap_project_files
         pro, syml, mods = _bootstrap_project_files(c, sch_path)
         print(f"[setup] {pro}")
         print(f"[setup] {syml}")
