@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -22,14 +22,14 @@
 
 from typing import cast
 
-from kipy import KiCad
-from kipy.geometry import Vector2
-from kipy.board import BoardLayer, BoardLayerClass
-from kipy.board_types import BoardText, FootprintInstance
+from klipy import KliCAD
+from klipy.geometry import Vector2
+from klipy.board import BoardLayer, BoardLayerClass
+from klipy.board_types import BoardText, FootprintInstance
 
 
 if __name__=='__main__':
-    kicad = KiCad()
+    kicad = KliCAD()
     board = kicad.get_board()
     stackup = board.get_stackup()
     defaults = board.get_graphics_defaults()[BoardLayerClass.BLC_COPPER]

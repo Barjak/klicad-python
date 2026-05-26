@@ -1,4 +1,4 @@
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -65,7 +65,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--input", default="kicad/api/proto")
-    parser.add_argument("--output", default="kipy/proto")
+    parser.add_argument("--output", default="klipy/proto")
     parser.add_argument("--protoc", help="Path to protoc", default=_default_protoc)
     parser.add_argument("--protol", help="Path to protoletariat", default=_default_protol)
 

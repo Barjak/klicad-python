@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -23,12 +23,12 @@
 import argparse
 import code
 
-from kipy import KiCad
+from klipy import KliCAD
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Connect to a headless KiCad API server started by kicad-python"
+        description="Connect to a headless KliCAD API server started by kicad-python"
     )
     parser.add_argument(
         "file",
@@ -44,17 +44,17 @@ def main():
     )
     args = parser.parse_args()
 
-    with KiCad(
+    with KliCAD(
         headless=True,
         kicad_cli_path=args.kicad_cli_path,
         file_path=args.file,
     ) as kicad:
         version = kicad.get_version()
-        print(f"Connected to headless KiCad {version.full_version}")
+        print(f"Connected to headless KliCAD {version.full_version}")
 
         banner = (
-            "\nHeadless KiCad REPL\n"
-            "The variable 'k' is a connected KiCad object.\n"
+            "\nHeadless KliCAD REPL\n"
+            "The variable 'k' is a connected KliCAD object.\n"
             "Try: k.get_version(), k.get_board(), or explore with dir(k).\n"
             "Press Ctrl-D (macOS/Linux) or Ctrl-Z then Enter (Windows) to exit.\n"
         )

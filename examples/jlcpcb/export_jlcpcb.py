@@ -2,7 +2,7 @@
 
 Captures the export "algorithm" researched against JLCPCB's own help article
 "How to generate Gerber and Drill files in KiCAD 9" (jlcpcb.com/help, updated
-2025-10-30).  Drives a running KliCAD instance via the kipy IPC + the
+2025-10-30).  Drives a running KliCAD instance via the klipy IPC + the
 kicad_native_* bindings.
 
 What it does, in order:
@@ -59,7 +59,7 @@ import sys
 import zipfile
 from pathlib import Path
 
-from kipy import KiCad
+from klipy import KliCAD
 
 
 # The 8 non-copper layers every JLCPCB order needs, in the order JLCPCB's
@@ -83,7 +83,7 @@ _FAB_EXTENSIONS = (
 
 
 def build_layer_list(copper_layer_count: int) -> str:
-    """Comma-separated KiCad layer names for a board with N copper layers."""
+    """Comma-separated KliCAD layer names for a board with N copper layers."""
     layers = ["F.Cu"]
     # Inner copper layers In1.Cu .. In(N-2).Cu
     for i in range(1, max(0, copper_layer_count - 2) + 1):
@@ -93,7 +93,7 @@ def build_layer_list(copper_layer_count: int) -> str:
     return ",".join(layers)
 
 
-def run(kicad: KiCad, board_path: str) -> dict:
+def run(kicad: KliCAD, board_path: str) -> dict:
     """Load board_path into the editor.  Returns its get_board_info() dict."""
     snippet = (
         "import kicad_native_gui as g; g.show_frame('pcb_editor')\n"
@@ -108,7 +108,7 @@ def run(kicad: KiCad, board_path: str) -> dict:
     return ast.literal_eval(r.result_repr)
 
 
-def run_drc(kicad: KiCad, board_path: str) -> list[dict]:
+def run_drc(kicad: KliCAD, board_path: str) -> list[dict]:
     """Run DRC; return the violation list.  Raises on dispatch failure."""
     r = kicad.run_python(
         "import kicad_native_drc as drc\n"
@@ -121,7 +121,7 @@ def run_drc(kicad: KiCad, board_path: str) -> list[dict]:
     return ast.literal_eval(r.result_repr)
 
 
-def export_gerbers(kicad: KiCad, board_path: str, out_dir: str, layers: str) -> None:
+def export_gerbers(kicad: KliCAD, board_path: str, out_dir: str, layers: str) -> None:
     r = kicad.run_python(
         "import kicad_native_export_gerbers as gb\n"
         f"res = gb.run({board_path!r}, {out_dir!r},\n"
@@ -136,7 +136,7 @@ def export_gerbers(kicad: KiCad, board_path: str, out_dir: str, layers: str) -> 
         )
 
 
-def export_drill(kicad: KiCad, board_path: str, out_dir: str) -> None:
+def export_drill(kicad: KliCAD, board_path: str, out_dir: str) -> None:
     # Every JLCPCB-recommended drill setting is already a binding default:
     # excellon / absolute origin / mm / decimal zeros / alternate oval /
     # PTH+NPTH merged.  No overrides needed.
@@ -179,7 +179,7 @@ def export_jlcpcb(board_path: str, output_dir: str | None = None) -> Path:
     shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True)
 
-    kicad = KiCad(timeout_ms=300_000)
+    kicad = KliCAD(timeout_ms=300_000)
     try:
         kicad.get_version()
     except Exception as e:

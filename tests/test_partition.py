@@ -1,4 +1,4 @@
-"""Eyeball tests for kipy.klicad.circuit._partition.partition — HANDOFF Phase D.
+"""Eyeball tests for klipy.klicad.circuit._partition.partition — HANDOFF Phase D.
 
 Three composite circuits exercise the Louvain-based heuristic:
 
@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import pytest
 
-from kipy.klicad.circuit import (
+from klipy.klicad.circuit import (
     Circuit, R, C, L, D, LED, NPN, V, Tran,
 )
 # partition is intentionally not on the public surface — these tests
 # poke the internal helper directly since they exercise the algorithm.
-from kipy.klicad.circuit._partition import partition, Block
+from klipy.klicad.circuit._partition import partition, Block
 
 
 # ──────────────────────────────────────────────────────────────────────────

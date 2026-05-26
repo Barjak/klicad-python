@@ -7,8 +7,8 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'kicad-python'
-copyright = 'The KiCad Development Team'
-author = 'The KiCad Development Team'
+copyright = 'The KliCAD Development Team'
+author = 'The KliCAD Development Team'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

@@ -1,7 +1,7 @@
-from kipy import KiCad
-from kipy.geometry import Vector2, Angle
+from klipy import KliCAD
+from klipy.geometry import Vector2, Angle
 
-board = KiCad().get_board()
+board = KliCAD().get_board()
 footprints = board.get_footprints()
 
 for footprint in footprints:

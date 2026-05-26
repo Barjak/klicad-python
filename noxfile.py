@@ -1,4 +1,4 @@
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -24,13 +24,13 @@ from nox.sessions import Session
 @nox.session
 def lint(session: Session):
     session.install("ruff")
-    session.run("ruff", "check", "examples", "kipy", "tests", "tools")
+    session.run("ruff", "check", "examples", "klipy", "tests", "tools")
 
 @nox.session
 def mypy(session: Session) -> None:
     session.install("poetry")
     session.run("poetry", "install", "--with", "dev")
-    session.run("mypy", "-p", "kipy")
+    session.run("mypy", "-p", "klipy")
 
 @nox.session
 def tests(session: Session) -> None:

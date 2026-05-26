@@ -298,7 +298,7 @@ def test_smoke_diff_self_zero_changes(loaded_switch_project):
 # --- last test: surface artifacts to the user ----------------------------
 
 def test_smoke_artifacts_summary(loaded_switch_project):
-    """Print the screenshot directory + KiCad version so a `pytest -s` run
+    """Print the screenshot directory + KliCAD version so a `pytest -s` run
     surfaces actionable info for visual review."""
     r = loaded_switch_project.run_python(
         "import kicad_native; kicad_native.version()"
@@ -306,7 +306,7 @@ def test_smoke_artifacts_summary(loaded_switch_project):
     assert_run_python_ok(r)
 
     print(f"\n>>> KliCAD GUI smoke artifacts:")
-    print(f"    KiCad version : {r.result_repr}")
+    print(f"    KliCAD version : {r.result_repr}")
     print(f"    screenshots   : {SMOKE_SCREENSHOT_DIR}")
     for p in sorted(SMOKE_SCREENSHOT_DIR.glob("*.png")):
         print(f"      - {p.name}  ({p.stat().st_size} bytes)")

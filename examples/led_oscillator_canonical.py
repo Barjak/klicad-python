@@ -25,8 +25,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from kipy import KiCad
-from kipy.klicad.circuit import (
+from klipy import KliCAD
+from klipy.klicad.circuit import (
     Circuit,
     R, C, NPN, LED, V,
     Tran,
@@ -64,7 +64,7 @@ def build_circuit() -> Circuit:
 
 def setup_only(c: Circuit) -> None:
     """Lay down the project + supporting files; don't connect to KliCAD."""
-    from kipy.klicad.circuit._kicad_sch import _bootstrap_project_files
+    from klipy.klicad.circuit._klicad_sch import _bootstrap_project_files
     pro_path, sym_lib, models_lib = _bootstrap_project_files(c, SCH_FILE)
     print(f"[setup] wrote project files in {PROJ_DIR}/")
     print(f"        - {pro_path.name}")
@@ -79,7 +79,7 @@ def setup_only(c: Circuit) -> None:
 
 def drive_demo(c: Circuit) -> int:
     """Generate the schematic + SPICE deck via live KliCAD."""
-    k = KiCad(timeout_ms=300_000)
+    k = KliCAD(timeout_ms=300_000)
 
     # Sanity: KliCAD is up
     try:

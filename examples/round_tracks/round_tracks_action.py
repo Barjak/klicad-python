@@ -26,11 +26,11 @@ import time
 from copy import deepcopy
 from typing import Set
 
-from kipy import KiCad
-from kipy.errors import ConnectionError
-from kipy.board_types import ArcTrack, Track, PadType, BoardLayer
-from kipy.geometry import Vector2
-from kipy.util import from_mm
+from klipy import KliCAD
+from klipy.errors import ConnectionError
+from klipy.board_types import ArcTrack, Track, PadType, BoardLayer
+from klipy.geometry import Vector2
+from klipy.util import from_mm
 
 from round_tracks_utils import (
     getTrackAngle,
@@ -49,7 +49,7 @@ PASSES_DEFAULT = 3
 class RoundTracks(RoundTracksDialog):
     def __init__(self):
         super(RoundTracks, self).__init__(None)
-        self.kicad = KiCad()
+        self.kicad = KliCAD()
         self.board = self.kicad.get_board()
         self.basefilename = os.path.join(
             self.board.document.project.path,
@@ -318,7 +318,7 @@ class RoundTracks(RoundTracksDialog):
 
             # TH pads cover all layers
             # SMD/CONN pads only touch F.Cu and B.Cu (layers 0 and 31)
-            # Due to glitch in KiCad, pad.GetLayer() always returns 0. Need to use GetLayerSet().Contains() to actually check
+            # Due to glitch in KliCAD, pad.GetLayer() always returns 0. Need to use GetLayerSet().Contains() to actually check
 
             padsInNet = []
             FCuPadsInNet = []

@@ -4,10 +4,10 @@ One module per subsystem.  Each test invokes the binding's `run()` and
 asserts:
   * `result['ok']` is True (or that an expected error is raised)
   * Expected output files exist where the binding said they went
-  * KiCad still responds afterwards (catches crashes immediately,
+  * KliCAD still responds afterwards (catches crashes immediately,
     before the session-end crash-log check)
 
-Tests that we know crash KiCad today are marked ``@pytest.mark.xfail``
+Tests that we know crash KliCAD today are marked ``@pytest.mark.xfail``
 with a description of the upstream bug.  When upstream fixes it the
 test will turn green (xpassed), prompting us to remove the mark.
 """
@@ -134,7 +134,7 @@ def test_export_sch_pdf(kicad, tmp_path):
 
 
 def test_export_sch_netlist(kicad, tmp_path):
-    """Schematic netlist export (KiCad sexpr) produces a .net file."""
+    """Schematic netlist export (KliCAD sexpr) produces a .net file."""
     out = tmp_path / "switch.net"
     r = kicad.run_python(
         "import kicad_native_export_sch_netlist as n\n"
@@ -259,7 +259,7 @@ def test_sym_export_svg(kicad, demo_sym_lib, tmp_path):
 
 
 def test_fp_export_svg_no_crash(kicad, demo_fp_lib, tmp_path):
-    """fp_export_svg dispatches without crashing KiCad.
+    """fp_export_svg dispatches without crashing KliCAD.
 
     History: previously crashed at upstream's ``doFpExportSvg`` due to
     a null-deref of ``Pgm().GetSettingsManager().GetProject("")``.  Our
@@ -270,7 +270,7 @@ def test_fp_export_svg_no_crash(kicad, demo_fp_lib, tmp_path):
     downstream code paths assume one) — that's a separate upstream
     limitation we can address by loading a transient project before
     dispatch.  For now: the canary that matters is that the binding
-    dispatches and KiCad is still alive afterwards.
+    dispatches and KliCAD is still alive afterwards.
     """
     out_dir = tmp_path / "svgs"
     out_dir.mkdir()
@@ -360,7 +360,7 @@ def test_gerber_export_png(kicad, tmp_path):
     "no draw items".  We pick the largest gerber in the export, which is
     the most likely to have content.  If even that is empty, accept the
     upstream "no draw items" error as proof the binding dispatched; the
-    test still fails only if KiCad crashes.
+    test still fails only if KliCAD crashes.
     """
     gerber_dir = tmp_path / "gerbers"
     gerber_dir.mkdir()
@@ -423,7 +423,7 @@ def test_gui_list_frame_names(kicad):
 @pytest.fixture
 def auto_dismiss_dialogs(kicad):
     """Auto-fixture: after each test that uses it, dismiss any stray
-    KiCad dialogs (error popups, "missing library" warnings, etc.) so
+    KliCAD dialogs (error popups, "missing library" warnings, etc.) so
     they don't pile up and block subsequent tests' main-thread access.
     """
     yield
@@ -456,7 +456,7 @@ def test_gui_show_frame(kicad, auto_dismiss_dialogs, frame_name):
 
     Some frames may pop an error dialog if no project / library is
     preselected.  We don't fail on that — we just verify the call
-    dispatched, KiCad still responds, and the teardown fixture
+    dispatched, KliCAD still responds, and the teardown fixture
     dismisses any leftover dialog so the next test starts clean.
     """
     r = kicad.run_python(
@@ -546,7 +546,7 @@ def test_gui_dismiss_dialogs_no_op(kicad):
 
 
 def test_gui_unknown_frame_raises(kicad):
-    """An unknown frame name raises ValueError, doesn't crash KiCad."""
+    """An unknown frame name raises ValueError, doesn't crash KliCAD."""
     r = kicad.run_python(
         "import kicad_native_gui as g\n"
         "g.show_frame('bogus_frame_name_xyz')"
@@ -564,7 +564,7 @@ def test_settings_roundtrip(kicad):
 
     Verifies the settings binding can read, write, and persist a value,
     and that the read-back reflects the write.  Restores the original at
-    the end so we don't leave KiCad in a different config than we found it.
+    the end so we don't leave KliCAD in a different config than we found it.
     """
     r = kicad.run_python(
         "import kicad_native_settings as s\n"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -23,8 +23,8 @@
 import argparse
 from pathlib import Path
 
-from kipy import KiCad
-from kipy.board import (
+from klipy import KliCAD
+from klipy.board import (
     Board3DFormat,
     BoardJobPaginationMode,
     DrillFormat,
@@ -39,7 +39,7 @@ from kipy.board import (
     StatsOutputFormat,
     Units,
 )
-from kipy.board_jobs import (
+from klipy.board_jobs import (
     Export3DSettings,
     Ipc2581ExportSettings,
     PlotSettings,
@@ -59,7 +59,7 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     # Export jobs can take a while on larger boards.
-    kicad = KiCad(timeout_ms=30000)
+    kicad = KliCAD(timeout_ms=30000)
     board = kicad.get_board()
     board_name = Path(board.name).stem or "board"
 

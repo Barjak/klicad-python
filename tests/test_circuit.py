@@ -1,4 +1,4 @@
-"""Phase A acceptance test for kipy.klicad.circuit.
+"""Phase A acceptance test for klipy.klicad.circuit.
 
 Verifies:
   1. The Python DSL builds a Circuit object without errors.
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from kipy.klicad.circuit import (
+from klipy.klicad.circuit import (
     Circuit,
     R, C, NPN, LED, V, D, L, XSubckt,
     ModelCard,
@@ -53,7 +53,7 @@ def build_led_oscillator() -> Circuit:
     return c
 
 
-# ---- pure tests (no KiCad needed) --------------------------------------
+# ---- pure tests (no KliCAD needed) --------------------------------------
 
 def test_build_circuit_no_errors():
     c = build_led_oscillator()
@@ -112,7 +112,7 @@ def test_spice_deck_well_formed():
     assert ".include " in deck and "standard.lib" in deck
     # All parts present
     for ref in ("V1", "R1", "R2", "R3", "R4", "C1", "C2", "Q1", "Q2", "D1"):
-        # Element line starts with the ref (which by KiCad convention
+        # Element line starts with the ref (which by KliCAD convention
         # already begins with the SPICE element letter, e.g. "R1 ...")
         assert any(line.startswith(f"{ref} ") for line in deck.splitlines()), \
             f"missing {ref}: {deck}"
@@ -173,7 +173,7 @@ def test_xsubckt_emitted_as_x_element():
     c.add(V("V1", "RAIL", "GND", dc=24))
     c.add(L("L1", "RAIL", "SW", value="50m"))
     c.add(R("R1", "SW", "GND", value="5"))
-    # KiCad-style ref 'D1' -> SPICE subckt call 'XD1'.
+    # KliCAD-style ref 'D1' -> SPICE subckt call 'XD1'.
     c.add(XSubckt("D1", ["SW", "RAIL"], subckt="SMAJ24CA"))
     deck = c.to_spice_deck()
     lines = deck.splitlines()
@@ -219,10 +219,10 @@ def test_modelcard_roundtrip():
     assert m.spice_line() == ".model DZ D (BV=15 RS=2)"
 
 
-# ---- XSubckt KiCad-symbol binding (per-instance) -----------------------
+# ---- XSubckt KliCAD-symbol binding (per-instance) -----------------------
 
 def test_xsubckt_schematic_binding_optional():
-    """XSubckt still works without a KiCad-symbol binding (SPICE-only mode)."""
+    """XSubckt still works without a KliCAD-symbol binding (SPICE-only mode)."""
     x = XSubckt("D1", ["A", "K"], subckt="SMF54A")
     assert x.kicad_lib_id == ""
     assert not hasattr(x, "kicad_pin_map") or not x.kicad_pin_map
@@ -279,11 +279,11 @@ def test_to_schematic_rejects_bare_xsubckt():
     """Without kicad_lib_id, schematic placement raises NotImplementedError
     (the runtime path that prior code already exercised, plus a clearer
     message)."""
-    from kipy.klicad.circuit._kicad_sch import _place_parts
+    from klipy.klicad.circuit._klicad_sch import _place_parts
     c = Circuit(name="t", desc="")
     c.add(XSubckt("U1", ["A", "B"], subckt="UNDEF"))
-    # Don't need a live KiCad to hit the early raise.
-    with pytest.raises(NotImplementedError, match="no KiCad symbol binding"):
+    # Don't need a live KliCAD to hit the early raise.
+    with pytest.raises(NotImplementedError, match="no KliCAD symbol binding"):
         _place_parts(c, kicad=None, models_lib_path=Path("/tmp/x.lib"))
 
 
@@ -295,7 +295,7 @@ def test_to_schematic_snippet_for_xsubckt(monkeypatch, tmp_path):
     sending it to a live KliCAD; that lets us inspect the generated
     code without requiring a running session.
     """
-    from kipy.klicad.circuit._kicad_sch import _place_parts
+    from klipy.klicad.circuit._klicad_sch import _place_parts
 
     c = Circuit(name="t", desc="")
     c.add(XSubckt(
@@ -444,7 +444,7 @@ def test_expect_external_default_not_in_dict():
 # NOTE: an earlier draft of this file added Python-side .SUBCKT arity
 # checks via a local parser.  That parser was removed and the validate_all()
 # check pruned — see CONTRIBUTING.md ("thin-layer principle").  The check
-# will return as a RunPython call against KiCad's SPICE_LIBRARY_PARSER
+# will return as a RunPython call against KliCAD's SPICE_LIBRARY_PARSER
 # once the SIM_LIBRARY_SPICE bindings are exposed on the C++ side.
 
 def test_self_running_default_emits_control():
@@ -473,7 +473,7 @@ def test_self_running_false_omits_control():
 # ---- write_project_shell (offline half of to_schematic) ----------------
 
 def test_write_project_shell_writes_files(tmp_path):
-    from kipy.klicad.circuit._kicad_sch import write_project_shell
+    from klipy.klicad.circuit._klicad_sch import write_project_shell
     c = build_led_oscillator()
     sch = tmp_path / "led_osc.kicad_sch"
     out = write_project_shell(c, sch)
@@ -486,7 +486,7 @@ def test_write_project_shell_writes_files(tmp_path):
 
 def test_write_project_shell_no_kicad_needed(tmp_path):
     """Offline call must not attempt any IPC."""
-    from kipy.klicad.circuit._kicad_sch import write_project_shell
+    from klipy.klicad.circuit._klicad_sch import write_project_shell
     c = Circuit("tiny")
     c.add(R("R1", "A", "0", "1k"))
     c.add(R("R2", "A", "B", "1k"))
@@ -497,7 +497,7 @@ def test_write_project_shell_no_kicad_needed(tmp_path):
 # ---- validate_all(kicad=...) — IPC arity check delegate ----------------
 
 class _FakeRunPython:
-    """Tiny mock that mimics kipy.KiCad.run_python returning a dict-repr."""
+    """Tiny mock that mimics klipy.KliCAD.run_python returning a dict-repr."""
 
     def __init__(self, registry: dict[str, int] | None, *, raise_exc: Exception | None = None):
         self._registry = registry

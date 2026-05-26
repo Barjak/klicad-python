@@ -57,7 +57,7 @@ import sys
 import time
 from pathlib import Path
 
-from kipy import KiCad
+from klipy import KliCAD
 
 
 PROJ_DIR = Path("/tmp/klicad-led-osc")
@@ -145,7 +145,7 @@ def setup_project_files() -> None:
     (PROJ_DIR / "sym-lib-table").write_text(
         '(sym_lib_table\n'
         '\t(version 7)\n'
-        f'\t(lib (name "ledosc") (type "KiCad") (uri "{PROJ_DIR / "led-osc-syms.kicad_sym"}") '
+        f'\t(lib (name "ledosc") (type "KliCAD") (uri "{PROJ_DIR / "led-osc-syms.kicad_sym"}") '
         '(options "") (descr "LED-osc demo symbols (R, C, LED, 2N3904 + parent)"))\n'
         ')\n'
     )
@@ -205,7 +205,7 @@ _NET_MAP = {
     ("R5", "1"): "NC2",  ("R5", "2"): "LED_A",
     ("C1", "1"): "NC2",  ("C1", "2"): "NB1",
     ("C2", "1"): "NC1",  ("C2", "2"): "NB2",
-    ("D1", "1"): "GND",  ("D1", "2"): "LED_A",  # KiCad LED: 1=K (cathode), 2=A (anode)
+    ("D1", "1"): "GND",  ("D1", "2"): "LED_A",  # KliCAD LED: 1=K (cathode), 2=A (anode)
 }
 
 # Expected per-net pin counts (for the verification step).
@@ -240,7 +240,7 @@ D1 LED_A 0 DLED
 
 
 def build_and_simulate() -> None:
-    k = KiCad(timeout_ms=300_000)
+    k = KliCAD(timeout_ms=300_000)
 
     # 1. Open schematic editor
     r = k.run_python(

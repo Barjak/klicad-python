@@ -1,4 +1,4 @@
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -18,9 +18,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from kipy import KiCad
-from kipy.util import from_mm
-from kipy.board_rules import (
+from klipy import KliCAD
+from klipy.util import from_mm
+from klipy.board_rules import (
     CustomRule,
     CustomRuleConstraint,
     CustomRuleConstraintType,
@@ -32,7 +32,7 @@ from kipy.board_rules import (
     RuleSeverity,
 )
 
-board = KiCad().get_board()
+board = KliCAD().get_board()
 
 rules = board.get_design_rules().rules
 
@@ -58,7 +58,7 @@ cr.name = "my rule"
 cr.layer_mode = CustomRuleLayerMode.CRLM_OUTER  # optional, omit for "all layers"
 cr.comments = "A rule to do something special"  # optional
 
-# The rule condition is an expression in KiCad's custom rule language
+# The rule condition is an expression in KliCAD's custom rule language
 
 cr.condition = "A.NetClass == 'MyClass' && A.Type == 'Track'"
 

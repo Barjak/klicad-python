@@ -49,7 +49,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve()
 sys.path.insert(0, str(HERE.parent.parent))
 
-from kipy.klicad.circuit import (
+from klipy.klicad.circuit import (
     Circuit, R, C, L, D, NPN, V, Tran, STANDARD_MODEL_LIB,
 )
 
@@ -128,8 +128,8 @@ def spice_only(c: Circuit) -> int:
 
 def drive_demo(c: Circuit, proj_dir: Path) -> int:
     """Author the schematic into KliCAD + run a transient through ngspice."""
-    from kipy.kicad import KiCad
-    k = KiCad(timeout_ms=300_000)
+    from klipy.klicad import KliCAD
+    k = KliCAD(timeout_ms=300_000)
     try:
         ver = k.get_version()
     except Exception as e:
@@ -190,7 +190,7 @@ def main() -> int:
     args.proj_dir.mkdir(parents=True, exist_ok=True)
     sch_path = args.proj_dir / f"{args.proj_dir.name}.kicad_sch"
     if args.setup_only:
-        from kipy.klicad.circuit._kicad_sch import _bootstrap_project_files
+        from klipy.klicad.circuit._klicad_sch import _bootstrap_project_files
         pro, syml, mods = _bootstrap_project_files(c, sch_path)
         print(f"[setup] {pro}")
         print(f"[setup] {syml}")

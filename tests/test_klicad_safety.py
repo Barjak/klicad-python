@@ -82,7 +82,7 @@ KIFACE_RESIDENT_MODULES = [
 # ---- boot / protocol ----
 
 def test_get_version(kicad):
-    """KiCad responds to the typed-RPC get_version command."""
+    """KliCAD responds to the typed-RPC get_version command."""
     v = kicad.get_version()
     assert v is not None
     assert str(v).startswith("10."), f"unexpected version: {v}"
@@ -115,7 +115,7 @@ def test_run_python_state_persists(kicad):
 
 
 def test_run_python_exception_captured(kicad):
-    """Python exceptions don't crash KiCad — they come back as ok=False + traceback."""
+    """Python exceptions don't crash KliCAD — they come back as ok=False + traceback."""
     r = kicad.run_python("1 / 0")
     assert not r.ok
     assert "ZeroDivisionError" in r.exception_traceback

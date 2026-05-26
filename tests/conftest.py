@@ -2,12 +2,12 @@
 KliCAD test fixtures.
 
 Assumes a fresh-build KliCAD is running externally — does NOT launch or
-kill KiCad.  Tests share one client connection per session for speed.
+kill KliCAD.  Tests share one client connection per session for speed.
 
 Key fixture: ``no_kicad_crashes`` is session-scoped and snapshots the
 macOS crash-report directory on entry, then on session teardown asserts
 that no new crash report appeared.  Run pytest with ``-x`` and you'll
-catch the first binding that crashes KiCad.
+catch the first binding that crashes KliCAD.
 
 To skip the crash check (e.g. while iterating on a binding known to
 crash today): mark the test ``@pytest.mark.expected_crash``.  That
@@ -29,8 +29,8 @@ _FORK_ROOT = Path(__file__).resolve().parents[1]
 if str(_FORK_ROOT) not in sys.path:
     sys.path.insert(0, str(_FORK_ROOT))
 
-from kipy import KiCad
-from kipy.errors import ConnectionError as KipyConnectionError
+from klipy import KliCAD
+from klipy.errors import ConnectionError as KipyConnectionError
 
 
 # The switch project is the canonical test board / schematic used across
@@ -41,7 +41,7 @@ from kipy.errors import ConnectionError as KipyConnectionError
 SWITCH_PROJECT_DIR = Path(__file__).resolve().parent / "fixtures" / "switch_project"
 SWITCH_PCB = SWITCH_PROJECT_DIR / "switch.kicad_pcb"
 SWITCH_SCH = SWITCH_PROJECT_DIR / "switch.kicad_sch"
-INSTALL_DIR = Path("/Users/shopnew/kicad-build/install/KiCad.app")
+INSTALL_DIR = Path("/Users/shopnew/kicad-build/install/KliCAD.app")
 CRASH_DIR = Path.home() / "Library/Logs/DiagnosticReports"
 
 
@@ -55,10 +55,10 @@ def _snapshot_crashes() -> set[str]:
 # --- session-scoped fixtures ----------------------------------------------
 
 @pytest.fixture(scope="session")
-def kicad() -> KiCad:
-    """Single shared KiCad client for the whole session.
+def kicad() -> KliCAD:
+    """Single shared KliCAD client for the whole session.
 
-    Skips the entire test run if KiCad isn't running (no socket, or socket
+    Skips the entire test run if KliCAD isn't running (no socket, or socket
     refuses connection).  Uses a 60-second timeout because some operations
     (3D export, rendering) genuinely take that long.
     """
@@ -66,13 +66,13 @@ def kicad() -> KiCad:
         # 5 minutes — 3D STEP export and full-quality renders can genuinely
         # take >60s on first invocation (OCC + raytracer warm-up).  Cost of
         # the higher ceiling is paid only when something actually hangs.
-        k = KiCad(timeout_ms=300_000)
+        k = KliCAD(timeout_ms=300_000)
         # Smoke probe so we fail before any test runs if the connection is bad.
         k.get_version()
     except (KipyConnectionError, OSError) as exc:
         pytest.skip(
-            f"KiCad isn't reachable on /tmp/kicad/api.sock: {exc}.  "
-            "Launch KiCad and rerun."
+            f"KliCAD isn't reachable on /tmp/klicad/api.sock: {exc}.  "
+            "Launch KliCAD and rerun."
         )
         raise  # appease type checkers
     return k
@@ -102,7 +102,7 @@ def _crash_baseline(request) -> None:
         return
 
     msg = [
-        f"{len(new)} new KiCad crash report(s) since session start "
+        f"{len(new)} new KliCAD crash report(s) since session start "
         f"({expected} expected from @expected_crash tests):",
     ]
     for name in new:
@@ -114,7 +114,7 @@ def _crash_baseline(request) -> None:
 
 @pytest.fixture
 def expected_crash(request):
-    """Mark a test as expected to crash KiCad.  Crash will be counted in
+    """Mark a test as expected to crash KliCAD.  Crash will be counted in
     the session-end check but won't fail the suite."""
     request.session.klicad_expected_crashes["value"] += 1
     yield
@@ -125,7 +125,7 @@ def switch_project_copy(tmp_path: Path) -> Path:
     """Function-scoped temp copy of the switch project directory.
 
     Excludes ``~*.lck`` files and ``.history/`` so we don't conflict
-    with the live KiCad's open project.
+    with the live KliCAD's open project.
     Returns the path to the copied directory.
     """
     dst = tmp_path / "switch"
@@ -170,11 +170,11 @@ def assert_run_python_ok(result, *, allow_stderr: bool = False) -> None:
         assert not result.stderr, f"unexpected stderr: {result.stderr!r}"
 
 
-def assert_kicad_alive(kicad: KiCad) -> None:
-    """Verify KiCad still responds.  Use this after any test that might
+def assert_kicad_alive(kicad: KliCAD) -> None:
+    """Verify KliCAD still responds.  Use this after any test that might
     have crashed it — fast follow-up assertion catches death immediately
     instead of waiting for session-end."""
     try:
         kicad.get_version()
     except (KipyConnectionError, OSError) as exc:
-        pytest.fail(f"KiCad appears dead after operation: {exc}")
+        pytest.fail(f"KliCAD appears dead after operation: {exc}")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -22,7 +22,7 @@
 
 from typing import Optional
 
-from kipy.board_types import (
+from klipy.board_types import (
     BoardLayer,
     PadType,
     PadStackShape,
@@ -32,9 +32,9 @@ from kipy.board_types import (
     FootprintInstance,
     Pad,
 )
-from kipy.geometry import Angle, Vector2
-from kipy.util.units import from_mm, to_mm
-from kipy.wizards import (
+from klipy.geometry import Angle, Vector2
+from klipy.util.units import from_mm, to_mm
+from klipy.wizards import (
     WizardBase,
     WizardContentType,
     WizardInfo,

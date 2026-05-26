@@ -2,9 +2,9 @@ import math
 from copy import deepcopy
 from math import pi
 from typing import Sequence, Union
-from kipy.geometry import Vector2
-from kipy.board import Board
-from kipy.board_types import Track, Arc, Pad
+from klipy.geometry import Vector2
+from klipy.board import Board
+from klipy.board_types import Track, Arc, Pad
 
 tolerance = 10  # in nanometres
 

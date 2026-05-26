@@ -1,4 +1,4 @@
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -20,8 +20,8 @@
 
 import pytest
 import math
-from kipy.common_types import Circle
-from kipy.geometry import (
+from klipy.common_types import Circle
+from klipy.geometry import (
     Box2,
     Vector2,
     arc_angle,
@@ -29,7 +29,7 @@ from kipy.geometry import (
     arc_center,
     normalize_angle_pi_radians,
 )
-from kipy.proto.common.types import base_types_pb2
+from klipy.proto.common.types import base_types_pb2
 
 def test_arc_center_circle():
     start = Vector2.from_xy(0, 0)
@@ -156,7 +156,7 @@ def test_arc_bounding_box():
     box = arc_bounding_box(start, mid, end)
 
     assert box.pos == Vector2.from_xy(-10000, -10000)
-    # epsilon because we have a calculated center; won't exactly match KiCad due to rounding
+    # epsilon because we have a calculated center; won't exactly match KliCAD due to rounding
     assert (box.size - Vector2.from_xy(20000, 20000)).length() < 2
 
 def test_arc_bounding_box_long_sweep():

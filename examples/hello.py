@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -20,11 +20,11 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from kipy import KiCad
+from klipy import KliCAD
 
 if __name__=='__main__':
     try:
-        kicad = KiCad()
-        print(f"Connected to KiCad {kicad.get_version()}")
+        kicad = KliCAD()
+        print(f"Connected to KliCAD {kicad.get_version()}")
     except BaseException as e:
-        print(f"Not connected to KiCad: {e}")
+        print(f"Not connected to KliCAD: {e}")

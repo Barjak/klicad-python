@@ -1,4 +1,4 @@
-# Copyright The KiCad Developers
+# Copyright The KliCAD Developers
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the “Software”), to deal
@@ -17,17 +17,17 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-from kipy import KiCad
-from kipy.board_types import (
+from klipy import KliCAD
+from klipy.board_types import (
     BoardLayer,
     Zone
 )
-from kipy.common_types import PolygonWithHoles
-from kipy.geometry import PolyLine, PolyLineNode
-from kipy.util import from_mm
+from klipy.common_types import PolygonWithHoles
+from klipy.geometry import PolyLine, PolyLineNode
+from klipy.util import from_mm
 
 if __name__=='__main__':
-    kicad = KiCad()
+    kicad = KliCAD()
     board = kicad.get_board()
 
     outline = PolyLine()
