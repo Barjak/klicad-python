@@ -28,6 +28,5 @@ directly).
 
 from ._facade import KliCAD
 from ._runner import KliCADError
-from . import workflow
 
-__all__ = ["KliCAD", "KliCADError", "workflow"]
+__all__ = ["KliCAD", "KliCADError"]
