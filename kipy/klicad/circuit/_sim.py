@@ -31,8 +31,21 @@ if TYPE_CHECKING:
     from ._circuit import Circuit
 
 
+# Module-level stderr capture buffer.  NgSpiceShared is a libngspice
+# singleton, so a Spy subclass registered on the FIRST call gets reused
+# on subsequent calls — a per-call closure would only capture stderr
+# during the first run_tran().  Routing through this module-level list
+# (cleared at the start of each run_tran) sidesteps the issue.
+_NG_STDERR_BUFFER: list[str] = []
+
+
 def _make_spy_class():
-    """Build an NgSpiceShared subclass that forwards stderr to our stderr."""
+    """NgSpiceShared subclass that captures stderr into ``_NG_STDERR_BUFFER``.
+
+    `run_tran()` clears the buffer at entry and reads its contents after
+    the tran finishes (or fails).  Lines are also forwarded to
+    ``sys.stderr`` so the user sees them in real time during long sims.
+    """
     from PySpice.Spice.NgSpice.Shared import NgSpiceShared
 
     class Spy(NgSpiceShared):
@@ -40,6 +53,7 @@ def _make_spy_class():
             if isinstance(msg, bytes):
                 msg = msg.decode("utf-8", "replace")
             if msg.startswith("stderr"):
+                _NG_STDERR_BUFFER.append(msg)
                 sys.stderr.write(f"  [ng] {msg}\n")
             return 0
 
@@ -92,6 +106,8 @@ def run_tran(circuit: "Circuit",
         uic = False
 
     # Lazy PySpice import so klicad-python doesn't hard-depend on it.
+    # Clear the module-level capture buffer for this call.
+    _NG_STDERR_BUFFER.clear()
     try:
         Spy = _make_spy_class()
     except ImportError as e:
@@ -119,7 +135,15 @@ def run_tran(circuit: "Circuit",
     tmp.close()
 
     try:
-        ng.source(tmp.name)
+        # `source` can raise NgSpiceCommandError on stderr-during-parse too
+        # (unresolved models, syntax errors).  Catch and let the empty-plot
+        # branch below surface the captured stderr.
+        try:
+            ng.source(tmp.name)
+        except Exception as e:
+            sys.stderr.write(
+                f"  [klicad.run_tran] source raised, checking for data: {e}\n"
+            )
 
         cmd = f"tran {step} {stop}" + (" uic" if uic else "")
         # PySpice may raise NgSpiceCommandError on benign stderr output;
@@ -135,9 +159,29 @@ def run_tran(circuit: "Circuit",
         plot_names = list(ng.plot_names)
         tran_plots = [p for p in plot_names if p.startswith("tran")]
         if not tran_plots:
-            raise RuntimeError(
-                f"run_tran(): no tran plot produced.  Available plots: {plot_names!r}"
+            # No tran plot — the deck almost certainly failed to parse.
+            # Include the captured ngspice stderr so the user/agent sees
+            # the actual `Error on line ...` / `PTerror: ...` lines that
+            # explain the problem, instead of just "no tran plot".  Take
+            # the last ~40 stderr lines to keep the message bounded.
+            tail = _NG_STDERR_BUFFER[-40:] if _NG_STDERR_BUFFER else []
+            stderr_excerpt = "\n  ".join(s.replace("stderr ", "") for s in tail)
+            msg = (
+                f"run_tran(): no tran plot produced.\n"
+                f"Available plots: {plot_names!r}\n"
             )
+            if stderr_excerpt:
+                msg += (
+                    f"ngspice stderr (last {len(tail)} lines — the actual "
+                    f"parse / simulation errors are here):\n  {stderr_excerpt}"
+                )
+            else:
+                msg += (
+                    "ngspice produced no stderr output either — the most "
+                    "likely cause is that the deck is empty or has no "
+                    "analyses.  Check c.parts and c.tran."
+                )
+            raise RuntimeError(msg)
         pname = tran_plots[-1]
 
         plot = ng.plot(None, pname)

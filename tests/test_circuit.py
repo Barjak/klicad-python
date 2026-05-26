@@ -629,6 +629,29 @@ def test_run_tran_requires_tran(_pyspice_available):
         c.run_tran()
 
 
+def test_run_tran_surfaces_ngspice_stderr_on_parse_error(_pyspice_available):
+    """Bad SPICE syntax should surface ngspice's actual error lines."""
+    c = Circuit("bad", strict=False)
+    # Add a B-source with intentionally broken syntax to provoke a parse
+    # error.  klicad-python doesn't have a B element so we add it via
+    # add_model + a custom XSubckt that references it — but the cleanest
+    # provocation is just an undefined model on a D part.
+    c.add(V("V1", "A", "0", dc=5))
+    c.add(D("D1", a="A", k="0", model="NONEXISTENT_MODEL_XYZ"))
+    c.tran = Tran(step="1u", stop="100u")
+    with pytest.raises(RuntimeError) as exc:
+        c.run_tran()
+    # The error should mention either the model name OR include a stderr
+    # excerpt — not just "no tran plot produced" with no context.
+    msg = str(exc.value)
+    assert (
+        "ngspice stderr" in msg
+        or "NONEXISTENT_MODEL_XYZ" in msg.upper()
+        or "MOSFET" in msg.upper()  # ngspice's actual error wording varies
+        or "model" in msg.lower()
+    ), f"expected ngspice context in error, got: {msg!r}"
+
+
 # ---- live ngspice run (requires KliCAD instance) -----------------------
 
 def test_oscillator_actually_oscillates(kicad):
