@@ -279,6 +279,123 @@ class KliCAD:
             exception_traceback=resp.exception_traceback,
         )
 
+    # ──────────────────────────────────────────────────────────────────
+    # Modal-dialog dismissal
+    #
+    # KliCAD frequently surfaces modal dialogs from action invocations
+    # (ERC report, DRC report, "Save changes?", "Library was modified
+    # externally", error toasts).  A modal blocks the IPC server's
+    # event loop: subsequent run_python() calls return AS_NOT_READY
+    # until a button is clicked.  These helpers let scripts dismiss
+    # them programmatically.
+    # ──────────────────────────────────────────────────────────────────
+
+    def list_modal_buttons(self) -> list[dict]:
+        """Enumerate buttons on KliCAD's topmost modal dialog (if any).
+
+        Returns a list of {dialog_title, label, id, enabled, is_default}
+        dicts.  Empty list if no modal is open.  Raises only on hard
+        IPC failures; modal-not-present is treated as the empty case.
+        """
+        import ast
+        r = self.run_python(
+            "import klicad_native_gui as g; g.list_dialog_buttons()"
+        )
+        if not r.ok:
+            return []
+        try:
+            return ast.literal_eval(r.result_repr)
+        except (ValueError, SyntaxError):
+            return []
+
+    def dismiss_modals(self,
+                       prefer: tuple[str, ...] = (
+                           "Close", "Cancel", "OK", "No", "Continue"
+                       ),
+                       max_iterations: int = 6,
+                       force_on_persist: bool = True) -> list[dict]:
+        """Click a dismissal button on any open modal; repeat until clear.
+
+        Tries each label in ``prefer`` in order; clicks the first match
+        and re-polls.  Iterates up to ``max_iterations`` times in case a
+        chain of dialogs is queued (a Close click reveals a Save prompt,
+        etc.).  Returns a list of {dialog_title, button_label, button_id}
+        for each dialog dismissed.
+
+        ``prefer`` defaults are ordered safest-first: ``Close`` for
+        report-style dialogs (ERC, DRC) that report-and-leave-as-is;
+        ``Cancel`` for action dialogs that would mutate if confirmed;
+        ``OK`` / ``No`` / ``Continue`` as fallbacks.
+
+        ``force_on_persist``: when a button click reports success but
+        the same dialog remains on the next poll (some dialogs use
+        custom button handlers that defer via wxYield), fall back to
+        ``close_topmost_dialog`` which calls EndModal(wxID_CANCEL)
+        directly.  Set False to skip the fallback and raise instead.
+        """
+        import ast
+        dismissed: list[dict] = []
+        for _ in range(max_iterations):
+            buttons = self.list_modal_buttons()
+            if not buttons:
+                break
+
+            # Try the preferred-button path first.
+            target = None
+            for label in prefer:
+                for btn in buttons:
+                    if btn.get("label") == label and btn.get("enabled"):
+                        target = btn
+                        break
+                if target is not None:
+                    break
+
+            if target is not None:
+                label = target["label"]
+                r = self.run_python(
+                    f"import klicad_native_gui as g; "
+                    f"g.click_dialog_button({label!r})"
+                )
+                if r.ok:
+                    try:
+                        dismissed.append(ast.literal_eval(r.result_repr))
+                    except (ValueError, SyntaxError):
+                        dismissed.append({"label": label})
+                    # Re-poll: did the click actually close it?
+                    next_buttons = self.list_modal_buttons()
+                    if not next_buttons:
+                        continue
+                    same_dialog = (
+                        next_buttons
+                        and next_buttons[0].get("dialog_title")
+                            == buttons[0].get("dialog_title")
+                    )
+                    if not same_dialog:
+                        continue   # different dialog appeared; loop handles it
+                    # Same dialog persists → click wasn't effective.
+                    if not force_on_persist:
+                        raise RuntimeError(
+                            f"dismiss_modals: clicked {label!r} on "
+                            f"{buttons[0].get('dialog_title')!r} but the "
+                            f"same dialog is still open"
+                        )
+                # Fall through to force-close.
+
+            # No preferred button OR click didn't take → force-close.
+            r = self.run_python(
+                "import klicad_native_gui as g; g.close_topmost_dialog()"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"dismiss_modals: close_topmost_dialog failed: "
+                    f"{r.exception_traceback}"
+                )
+            try:
+                dismissed.append(ast.literal_eval(r.result_repr))
+            except (ValueError, SyntaxError):
+                dismissed.append({"forced": True})
+        return dismissed
+
     def get_kicad_binary_path(self, binary_name: str) -> str:
         """Returns the full path to the given KliCAD binary
 
