@@ -511,6 +511,195 @@ class TestBusPortWidthChange:
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Spice-idempotence per sheet — Group-A cases run against child sheets.
+#
+# These verify the existing diff/apply contract from test_diff_apply.py
+# (code owns value + Sim.* fields; aesthetic state survives) extends
+# correctly across sheet boundaries.  A body part inside a Sub-Circuit
+# must respond to code-driven field changes just like a top-level part.
+# ──────────────────────────────────────────────────────────────────────────
+
+class TestSpiceIdempotencePerSheet:
+    def _build_v1(self) -> Circuit:
+        """Top circuit with one amp instance; amp body has a passive (R1)
+        and an active (Q1) for the field-update tests."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+        amp.add_model_lib(STANDARD_MODEL_LIB)
+        amp.add(R("R1", "IN", "n_base", value="10k"))
+        amp.add(R("R2", "VCC", "OUT", value="1k"))
+        amp.add(NPN("Q1", c="OUT", b="n_base", e="GND"))
+        top = Circuit("hierarchy")
+        top.add_model_lib(STANDARD_MODEL_LIB)
+        top.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        top.add(amp.instance("U_amp1", IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        return top, amp
+
+    def _body_row(self, kicad, ref: str) -> dict:
+        """Find a body part's row on the child sheet (sheet_path != '/')."""
+        rows = _list_all_symbols(kicad)
+        return next(r for r in rows
+                    if r["ref"] == ref and r["sheet_path"] != "/")
+
+    def test_value_change_on_kept_body_passive(self, kicad):
+        """R1.value 10k → 47k inside the amp body — child sheet's Value
+        field updates; sheet instance kiid + R1 kiid both survive."""
+        top1, amp1 = self._build_v1()
+        _reset_to(kicad, top1)
+        sheet_kiid_before = _list_root_sheets(kicad)[0]["uuid"]
+        r1_before = self._body_row(kicad, "R1")
+        assert r1_before["value"] == "10k"
+        r1_kiid_before = r1_before["kiid"]
+
+        # Rebuild with R1 = 47k
+        amp2 = Circuit("amp", ports=["IN", "OUT"])
+        amp2.add_model_lib(STANDARD_MODEL_LIB)
+        amp2.add(R("R1", "IN", "n_base", value="47k"))            # changed
+        amp2.add(R("R2", "VCC", "OUT", value="1k"))
+        amp2.add(NPN("Q1", c="OUT", b="n_base", e="GND"))
+        top2 = Circuit("hierarchy")
+        top2.add_model_lib(STANDARD_MODEL_LIB)
+        top2.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top2.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        top2.add(amp2.instance("U_amp1", IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top2.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        to_schematic(top2, SCH, kicad=kicad, mode="diff")
+
+        sheet_kiid_after = _list_root_sheets(kicad)[0]["uuid"]
+        r1_after = self._body_row(kicad, "R1")
+        assert r1_after["value"] == "47k"
+        assert r1_after["kiid"] == r1_kiid_before
+        assert sheet_kiid_after == sheet_kiid_before
+
+    def test_model_change_on_kept_body_active(self, kicad):
+        """Q1 model NPN_S → 2N2222 inside the amp body — Sim.Name on
+        the child sheet's Q1 updates; kiids survive."""
+        top1, _ = self._build_v1()
+        _reset_to(kicad, top1)
+        q1_before = self._body_row(kicad, "Q1")
+        sim_name_before = q1_before["fields"].get("Sim.Name", "")
+        # Default NPN model is 2N3904.
+        assert sim_name_before == "2N3904"
+        q1_kiid_before = q1_before["kiid"]
+
+        # Rebuild with Q1 model 2N2222
+        amp2 = Circuit("amp", ports=["IN", "OUT"])
+        amp2.add_model_lib(STANDARD_MODEL_LIB)
+        amp2.add(R("R1", "IN", "n_base", value="10k"))
+        amp2.add(R("R2", "VCC", "OUT", value="1k"))
+        amp2.add(NPN("Q1", c="OUT", b="n_base", e="GND", model="2N2222"))
+        top2 = Circuit("hierarchy")
+        top2.add_model_lib(STANDARD_MODEL_LIB)
+        top2.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top2.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        top2.add(amp2.instance("U_amp1", IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top2.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        to_schematic(top2, SCH, kicad=kicad, mode="diff")
+
+        q1_after = self._body_row(kicad, "Q1")
+        assert q1_after["fields"].get("Sim.Name") == "2N2222"
+        assert q1_after["kiid"] == q1_kiid_before
+
+    def test_sim_params_change_on_kept_body_typed_source(self, kicad):
+        """A typed V-source's Sim.Params field updates inside a child sheet.
+
+        Build a Sub-Circuit whose body contains a PULSE source; iterate
+        the parameters and verify the child sheet's Sim.Params changes."""
+        sub = Circuit("stim", ports=["OUT"])
+        sub.add_model_lib(STANDARD_MODEL_LIB)
+        sub.add(V("V1", "OUT", "GND",
+                  ac="PULSE(0 3.3 0 1n 1n 1u 2u)"))
+        top = Circuit("hierarchy")
+        top.add_model_lib(STANDARD_MODEL_LIB)
+        top.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        # Keep U_amp1 around so the root has a familiar shape
+        top.add(_amp_def().instance("U_amp1",
+                                    IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        top.add(sub.instance("U_stim", OUT="STIM_OUT"))
+        top.add(R("R_STIM", "STIM_OUT", "GND", value="1k"))
+        _reset_to(kicad, top)
+
+        v1_before = next(
+            r for r in _list_all_symbols(kicad)
+            if r["ref"] == "V1" and r["sheet_path"] != "/"
+            and "stim" in r["sheet_path"].lower()
+            or (r["ref"] == "V1" and r["sheet_path"] != "/"
+                and "PULSE" in r["fields"].get("Sim.Params", "") + r["value"])
+        )
+        # That or-clause is to find V1 inside the stim child sheet
+        # (there may be other V1s if amp body has any).
+        params_before = v1_before["fields"].get("Sim.Params", "")
+        assert "3.3" in params_before, (
+            f"baseline Sim.Params missing 3.3: {params_before!r}"
+        )
+        v1_kiid_before = v1_before["kiid"]
+
+        # Rebuild with different pulse amplitude
+        sub2 = Circuit("stim", ports=["OUT"])
+        sub2.add_model_lib(STANDARD_MODEL_LIB)
+        sub2.add(V("V1", "OUT", "GND",
+                   ac="PULSE(0 5.0 1m 100n 100n 5m 10m)"))
+        top2 = Circuit("hierarchy")
+        top2.add_model_lib(STANDARD_MODEL_LIB)
+        top2.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top2.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        top2.add(_amp_def().instance("U_amp1",
+                                     IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top2.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        top2.add(sub2.instance("U_stim", OUT="STIM_OUT"))
+        top2.add(R("R_STIM", "STIM_OUT", "GND", value="1k"))
+        to_schematic(top2, SCH, kicad=kicad, mode="diff")
+
+        v1_after = next(
+            r for r in _list_all_symbols(kicad)
+            if r["ref"] == "V1" and r["kiid"] == v1_kiid_before
+        )
+        params_after = v1_after["fields"].get("Sim.Params", "")
+        assert params_after != params_before, (
+            f"Sim.Params unchanged: {params_after!r}"
+        )
+        assert "5" in params_after
+
+    def test_lib_id_change_on_body_part_demotes_per_sheet(self, kicad):
+        """Changing kicad_lib_id of a body part inside a Sub-Circuit forces
+        remove+add of THAT body part (per the existing diff semantics).
+        The containing sheet instance survives — the change is scoped
+        to the child sheet."""
+        top1, _ = self._build_v1()
+        _reset_to(kicad, top1)
+        sheet_kiid_before = _list_root_sheets(kicad)[0]["uuid"]
+        r1_kiid_before = self._body_row(kicad, "R1")["kiid"]
+
+        # Same amp def, but R1's kicad_lib_id is forced to a different
+        # symbol.  R1 will be removed and re-placed in the child sheet.
+        amp2 = Circuit("amp", ports=["IN", "OUT"])
+        amp2.add_model_lib(STANDARD_MODEL_LIB)
+        r1_alt = R("R1", "IN", "n_base", value="10k")
+        r1_alt.kicad_lib_id = "Device:R_US"
+        amp2.add(r1_alt)
+        amp2.add(R("R2", "VCC", "OUT", value="1k"))
+        amp2.add(NPN("Q1", c="OUT", b="n_base", e="GND"))
+        top2 = Circuit("hierarchy")
+        top2.add_model_lib(STANDARD_MODEL_LIB)
+        top2.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        top2.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        top2.add(amp2.instance("U_amp1", IN="AUDIO_IN", OUT="AUDIO_OUT"))
+        top2.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        to_schematic(top2, SCH, kicad=kicad, mode="diff")
+
+        sheet_kiid_after = _list_root_sheets(kicad)[0]["uuid"]
+        r1_after = self._body_row(kicad, "R1")
+        # R1 was remove+add'd: lib_id flipped, kiid changed.
+        assert r1_after["lib_id"] == "Device:R_US"
+        assert r1_after["kiid"] != r1_kiid_before
+        # The sheet instance survives — change scoped to the child.
+        assert sheet_kiid_after == sheet_kiid_before
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # H2-C — SPICE netlist generation from hierarchy
 # ──────────────────────────────────────────────────────────────────────────
 
