@@ -1,327 +1,427 @@
-# Multi-channel design (Altium-style REPEAT) — implementation plan
+# Multi-channel design (REPEAT-style sheets) — implementation plan
 
-Status: **DRAFT — pending audit**
+Status: **READY TO START R0 — audit applied, open questions resolved**
 
 This plan adds native N-into-1 sheet collapse to KliCAD's schematic
 editor + klicad-python's DSL.  Today a 60-channel design produces 60
 visually identical `SCH_SHEET` items on the parent canvas; with this
-feature, **one** `SCH_SHEET` annotated `repeat=60` represents all 60
-channels, with bus-syntax sheet pins distributing one bit of each bus
-to each channel.
+feature, **one** `SCH_SHEET` annotated `repeat_count=60` represents
+all 60 channels, with bus-syntax sheet pins distributing one bit of
+each bus to each channel.
 
-Goal: design feature parity with Altium's `REPEAT(SheetSymbol, 1, N)`
-+ Cadence-style instance arrays.  Tracked upstream as KiCad GitLab
-issues [#1998](https://gitlab.com/kicad/code/kicad/-/issues/1998) and
-[#13814](https://gitlab.com/kicad/code/kicad/-/issues/13814); both
-open with no milestone.  This plan is what we'd implement if upstream
-hasn't acted by the time we need it for the 60-channel driver-board.
+Tracked upstream as KiCad GitLab [#1998](https://gitlab.com/kicad/code/kicad/-/issues/1998)
+and [#13814](https://gitlab.com/kicad/code/kicad/-/issues/13814); both
+open with no milestone.
+
+## The chosen approach (post-audit): synthetic-instance complex hierarchy
+
+The audit (`task ad0100eda1ff369a82`) rejected the original
+"`SCH_SHEET_PATH` instance_index" design as gratuitously invasive
+(touches ~165 path-handling call sites, breaks `KIID_PATH`
+round-tripping that `FOOTPRINT::m_path` depends on, and forces refdes
+mangling).  Better insight:
+
+**KiCad already has the primitive we need — complex hierarchy.**  Today
+multiple `SCH_SHEET` items can share one `SCH_SCREEN` via filename
+match (klicad-python uses this in `add_sheet`).  The hierarchy walker
+produces N distinct `SCH_SHEET_PATH`s whose only difference is the
+last segment's KIID; annotation already hands out distinct refs per
+path; PCB Multi-Channel detects peers via `(sheetname, sheetfile)`
+strings derived from those paths.
+
+What's actually missing for the user's "one block on canvas, N
+channels in the netlist" goal is purely **the canvas-side collapse**.
+Everything else (path enumeration, annotation, netlist, PCB sync,
+ERC) already works for the N-distinct-sheets case.
+
+The plan: a `SCH_SHEET` carrying `m_repeat_count = N` is **rendered as
+one block** on the canvas, but **materialized as N synthetic SCH_SHEET
+children** at `BuildSheetList` time, each sharing the on-canvas
+sheet's `SCH_SCREEN` and carrying a pre-allocated stable KIID from the
+parent's `repeat_instances` list.  Downstream consumers see what looks
+like N normal complex-hierarchy peers.  Only two pieces of genuinely
+new logic are needed:
+
+1. **Bus-pin bit fan-out** at the connection-graph level — when a
+   sheet pin is bus-named on a repeated sheet, the per-path
+   `instance_index` (derivable from "which slot in the synthetic-list
+   this path's last KIID occupies") selects which bit of the parent's
+   bus connects to the body's scalar net.
+2. **ERC marker dedup** — N identical body-faults must collapse to
+   one marker on the report.
+
+The rest of the work is data-model + serialization + DSL plumbing.
 
 ## Established context
 
 1. **Thin-layer principle** (CONTRIBUTING.md).  klicad-python
    orchestrates; the data-model + connectivity + netlist logic lives
    in KliCAD's C++.
-2. **`(sheet_path, ref)` diff identity** was the H3 plan's locked
-   decision; nested hierarchy (H4) was deferred specifically because
-   the diff-key refactor needed to land first.  This feature reopens
-   that question — repeated sheets multiply the path space.
-3. **Today's pattern** is N `SCH_SHEET` items sharing one
-   `.kicad_sch` via complex hierarchy.  klicad-python already does
-   the SCH_SCREEN-sharing optimization (`add_sheet` looks up an
-   existing screen by filename).  The hierarchy walker emits N
-   distinct `SCH_SHEET_PATH`s, one per instance.
-4. **Bus syntax** at the sheet-pin level already produces a bus on
-   the parent side, but pins inside the child sheet must use the
-   expanded scalar names (`DATA[3]` etc.) and N instances of the
-   body must exist for N channels.  We don't get free replication.
-5. **PCB Multi-Channel tool** (upstream pcbnew feature) replicates
-   layout across sheet *paths*.  Whatever schematic-side
-   representation we land on must produce N sheet paths in the
-   netlist, or the PCB tool breaks.
+2. **`(sheet_path, ref)` diff identity** (locked in H3).  Synthetic
+   clones produce N real paths; identity stays `(KIID_PATH, ref)` on
+   both schematic and DSL sides.  No new key shape needed.
+3. **Spice-idempotence**: the SPICE deck for a repeated sheet must
+   depend only on the Circuit's `repeat=N` declaration, not on the
+   history of how synthetic clones were allocated.  KIIDs are stable
+   across save/load (serialized in `repeat_instances`).
+4. **PCB Multi-Channel tool** (upstream pcbnew) keys on
+   `FOOTPRINT::GetSheetname()/GetSheetfile()` strings produced by
+   `SCH_SHEET_PATH::PathHumanReadable`.  Synthetic clones get
+   distinct KIIDs → distinct human-readable paths → automatic peer
+   detection.  Zero pcbnew code change required.
 
-## Decisions to lock (proposed)
+## Decisions locked
 
-Pending the auditor's input.  Defaults shown.
+- **Refdes encoding**: existing KiCad per-path annotation.  Refs are
+  `U1, U2, … UN` (or whatever annotation hands out), distinguished
+  via `SCH_SHEET_PATH` exactly as today's complex hierarchy.  No
+  `_CH<N>` suffix; no `[N]` bracket form.
+- **SCH_SHEET_PATH structure**: **unchanged**.  No `instance_index`
+  field, no new segment shape.
+- **File format**: **mandatory version bump**.  Current version
+  `20260326` → new `20260601` (or month of landing).  Older KiCad
+  loading a v20260601 file will refuse rather than silently dropping
+  the repeat info.
+- **Bus pin width**: **strict-equal-or-error**.  Bus pin `FOO[0..K-1]`
+  on a `repeat=N` sheet requires `K == N`.  No partial binding, no
+  fan-in, no broadcast.  Altium's rule.
+- **Scalar ports** are shared across all instances (consistent with
+  implicit-power semantics: a scalar `EN` on a `repeat=8` sheet means
+  one signal connects to all 8 channels).  Per-channel fan-out
+  requires explicit bus syntax: `EN[0..7]`.
+- **Annotation policy**: interleave freely with non-repeated
+  symbols.  No reserved blocks.  Existing behavior; cheap default.
+- **Shrink semantics**: when `repeat_count` decreases (N → M, M<N),
+  KIIDs for dropped instances vanish; per-path `SCH_SYMBOL_INSTANCE`
+  entries are silently garbage-collected.  KIID regeneration on
+  re-grow is deterministic from a salt + index.
+- **Canvas rendering**: same-size sheet with "×N" decoration in the
+  corner.  No visual tile / grow — that would complicate selection
+  bbox calculations and the diff/apply position contract.
+- **Hierarchy navigator UX**: N entries (the natural output of
+  synthetic expansion).  A "collapse repeated peers" view toggle is
+  deferred to a polish phase.
 
-- **Schematic data model**: `SCH_SHEET` gains a `m_repeat_count`
-  integer, default 1.  Backward compatible — `.kicad_sch` v <
-  20260520 round-trips unchanged.  See "Alternative B" below for
-  the netlist-only variant.
-- **Sheet path expansion**: a sheet with `repeat_count = N` yields
-  N logical `SCH_SHEET_PATH`s during hierarchy walk.  This is the
-  invasive change — every code path that iterates
-  `Schematic().Hierarchy()` learns to handle it.
-- **Bus-pin bit distribution**: sheet pin `FOO[0..N-1]` on a
-  repeated sheet routes bit M to instance M's `FOO` net (inside
-  the body, `FOO` is a scalar reference).  Scalar pins are shared
-  across all instances (KiCad's existing global-power semantics for
-  GND/VCC carry over automatically).
-- **Refdes annotation**: per-instance refs follow Altium convention
-  `<parent_ref>_<instance>` (e.g., `U1_CH1`..`U1_CH8`).  Internal
-  body refs get path-distinguishing annotation as today.
-- **DSL surface**: `sub.instance("U1", repeat=8, **port_map)`
-  returns ONE `SubcircuitInstance` with `repeat_count=8`.  Port
-  validation checks that every bus port has width equal to
-  `repeat_count` (or is scalar = shared).
+## DSL surface (klicad-python)
 
-## Alternative B (netlist-time expansion)
+```python
+amp = Circuit("channel", ports=["GATE", "OUT", "DATA[0..N-1]"])
+amp.add(...)
 
-Instead of teaching every KliCAD code path about repeated sheets,
-keep the schematic representation single-instance and **expand at
-netlist export time**: SPICE deck + KiCad-native netlist emit N
-component instances per repeat block, but the schematic editor +
-ERC + connectivity graph only ever see ONE child sheet.
+top = Circuit("driver")
+top.add(amp.instance("U_CH",            # single ref; annotation expands
+                     repeat=8,
+                     GATE="GATE_BUS[0..7]",
+                     OUT="OUT_BUS[0..7]",
+                     DATA="DATA_BUS[0..7]"))
+```
 
-**Pros**: localized change (only the netlist exporter); upstream PCB
-Multi-Channel tool continues to see N sheet paths in the netlist.
-
-**Cons**: ERC can't detect issues that only manifest at expansion
-(e.g., a bus pin's width mismatch with `repeat_count`); the GUI
-hierarchy navigator shows 1 entry but the netlist + PCB show N —
-asymmetry violates the principle of least surprise; doesn't deliver
-the user-visible "8 sheets collapse to 1 sheet in the navigator"
-result they asked for.
-
-## Alternative C (compile-time expansion in klicad-python)
-
-Keep KliCAD untouched.  klicad-python's `to_schematic` expands a
-`repeat=N` `SubcircuitInstance` into N regular instances at emit
-time, producing today's "8 SCH_SHEETs sharing one file" pattern
-visible in KliCAD.
-
-**Pros**: zero C++ work; ships immediately.
-
-**Cons**: doesn't deliver the visual collapse; KliCAD still shows
-the N-fold repetition in the hierarchy navigator; this is what we
-have today.  Not really a "feature".
-
-## Recommended approach (pending audit)
-
-**Alternative A** (native data model + path expansion), with these
-priorities:
-
-1. Get the SCH_SHEET data-model change in first; everything else
-   builds on it.
-2. Hide the implementation behind a feature flag during early phases
-   so the existing schematic save/load doesn't surprise users.
-3. PCB Multi-Channel tool integration: prefer to *teach* it (proper
-   fix) but fall back to *export-time explosion* (a netlist-only
-   shim) if that proves intractable.
+Internally:
+- `SubcircuitInstance` gains `repeat_count: int = 1` field.
+- `Circuit.instance(ref, repeat=N, **port_map)` validates: every bus
+  port has width matching N exactly; scalar ports are shared.
+- `to_schematic` emits ONE `add_sheet(...)` call with `repeat_count=N`.
+- `to_spice_deck` emits N X-lines from the single SubcircuitInstance
+  by walking the expanded port-map.
 
 ---
 
-# Phase R1 — SCH_SHEET data model + serialization
+# Phase R0 — `SCH_SHEET_PATH.Last()` consumer audit
 
-**Goal**: `SCH_SHEET` carries a `repeat_count` attribute; round-trips
-through `.kicad_sch`.
+**Goal**: enumerate all KliCAD call sites that walk back from
+`path.Last()` and operate on the user-placed SCH_SHEET (fields,
+properties, geometry).  Synthetic clones must forward those calls
+to the on-canvas template, or hold their own forwarded copies.
 
-## Files touched (KliCAD)
+## Deliverable
 
-| File | Change |
-|---|---|
-| `eeschema/sch_sheet.h` / `sch_sheet.cpp` | Add `m_repeat_count` int; getter/setter; default 1; clone in copy ctor |
-| `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.cpp` | Parse `(repeat_count <N>)` s-expr token |
-| `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr.cpp` | Emit `(repeat_count <N>)` when `> 1`; skip when default |
-| `eeschema/sch_sheet.cpp` (visual) | Render `×N` decoration when `repeat_count > 1` (top-right corner of sheet rect) |
+A short report (in `docs/plans/multi-channel-r0.md`) listing each
+call site with a verdict:
 
-## File-format compatibility
+- **Trivial** — the field is always read from the template (e.g.,
+  `Last()->GetName()` already returns the same string for any clone)
+- **Needs forwarding** — synthetic clone should return the template's
+  value via a delegating getter
+- **Needs per-instance** — synthetic clone needs its own value
+  (almost certainly only `m_Uuid`)
 
-- `repeat_count == 1` → emit nothing extra.  Schematic byte-identical
-  to today's output for non-repeated sheets.
-- `repeat_count > 1` → emit `(repeat_count N)` token.  KiCad versions
-  predating this feature would lex-warn-and-ignore (`(repeat_count
-  …)` is unknown).  Verified upstream: KiCad's s-expr parser does
-  ignore unknown tokens at sheet level rather than erroring.
-- Format version bump optional — would let us reject older KiCad
-  versions explicitly rather than letting them silently lose the
-  attribute.  Default: bump.
+## Method
 
-## Tests
+```bash
+grep -rnE 'path\.Last\(\)|sheetPath\.Last\(\)|\.Last\(\) *->' \
+    /home/jakob/projects/KliCAD/eeschema/ | sort -u
+```
 
-- Pure-C++: `qa/eeschema/test_sch_sheet_repeat.cpp` — construct
-  `SCH_SHEET` with various `repeat_count`, serialize to s-expr,
-  parse back, verify round-trip.
-- Backward compat: load a current-day .kicad_sch with no repeat
-  tokens, verify `repeat_count == 1`.
+Then per-call audit, mostly mechanical.
 
-# Phase R2 — Hierarchy walker + SCH_SHEET_PATH expansion
+# Phase R1 — `SCH_SHEET.repeat_count` + serialization
 
-**Goal**: `Schematic().Hierarchy()` enumerates N logical paths per
-repeated `SCH_SHEET`.
+**Goal**: `SCH_SHEET` carries `repeat_count` + a `repeat_instances`
+KIID list; round-trips through `.kicad_sch`.
 
 ## Files touched
 
 | File | Change |
 |---|---|
-| `eeschema/sch_sheet_path.h` / `.cpp` | Each `SCH_SHEET_PATH` segment can carry an `instance_index` int (default 0).  `Hierarchy()` emits paths for `instance_index ∈ [0, repeat_count)` when a sheet repeats. |
-| `eeschema/connection_graph.cpp` | Walks `m_hier_pins` per-sheet-path; needs to bus-bit-route bus-named pins when `instance_index > 0` (or generally: per path, pin's value = bit `instance_index` of the bus) |
-| `eeschema/symbol_instance.h` / wherever per-path refdes lives | Annotation tags every instance's body parts; needs to handle the extra path discriminator |
+| `eeschema/sch_sheet.h` / `.cpp` | Add `m_repeat_count: int = 1` and `m_repeat_instances: std::vector<KIID>`; getters / setters; copy ctor clones both |
+| `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.cpp` | Parse `(repeat_count N)` and `(repeat_instances (uuid ...) ...)`; default to `N=1, empty vector` when absent.  **Verify** the existing parser behavior on unknown tokens at sheet level (the audit flagged this as the unverified claim from the prior draft). |
+| `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr.cpp` | Emit both tokens when `repeat_count > 1`; skip when default.  Mirror the existing `sheet_instances` emission pattern (line 1693-1707). |
+| `eeschema/sch_file_versions.h` | Bump `SEXPR_SCHEMATIC_FILE_VERSION` to next month's date with comment "Sheet repeat instances" |
+| `eeschema/sch_sheet.cpp` (paint) | Render "×N" decoration in top-right corner when `repeat_count > 1`; keep bbox unchanged |
 
-## Risks
+## KIID allocation
 
-- Wherever code does `for( const SCH_SHEET_PATH& path : sch.Hierarchy() )` and then walks `path.LastScreen()->Items()`, the per-path scope now needs to know about the instance index for any bus-port content.  This is invasive — likely 30+ call sites across KliCAD.
-- Annotation needs to assign per-(path, instance_index) refs.  The existing per-path machinery may handle this with a path encoding extension or may need an additional dimension.
+When `repeat_count` is set or increased (DSL or GUI):
+- Generate `repeat_count - 1` additional KIIDs (one is implicit — the
+  on-canvas SCH_SHEET's own `m_Uuid` is instance 0).
+- Store in `m_repeat_instances` in slot order; serialize with the
+  sheet.
+- Stable across save/load — synthetic-clone identities don't change.
+
+When `repeat_count` decreases: pop tail KIIDs from `m_repeat_instances`.
+Orphan symbol-instance entries on those vanished paths are GC'd by
+the next `SCHEMATIC::CleanupOrphans` pass (or eagerly here — TBD).
+
+## Tests
+
+- `qa/eeschema/test_sch_sheet_repeat.cpp` — construct SCH_SHEET,
+  set `repeat_count`, serialize to s-expr, parse back, verify
+  identical state.
+- Backward compat: load current-day `.kicad_sch` (no tokens) →
+  `repeat_count == 1`, `m_repeat_instances.empty()`.
+
+# Phase R2 — `BuildSheetList` synthetic expansion
+
+**Goal**: `SCH_SHEET_LIST::BuildSheetList` materializes N synthetic
+sibling `SCH_SHEET` pointers per repeated sheet.
+
+## Files touched
+
+| File | Change |
+|---|---|
+| `eeschema/sch_sheet_path.cpp:984-1059` (`BuildSheetList`) | When pushing a child SCH_SHEET, check `repeat_count`.  If `> 1`, push `repeat_count` synthetic siblings instead, each with a `m_Uuid` from the parent's `m_repeat_instances` slot (with the first slot being the on-canvas sheet's actual `m_Uuid`).  Synthetic clones share `m_screen` and all other fields with the template via a thin `SCH_SHEET_INSTANCE_VIEW` shim, OR via copy-on-the-stack siblings whose lifetime is bounded by the walk. |
+| `eeschema/sch_sheet.h` / `.cpp` | Possibly add an `IsSynthetic() const` predicate (returns true if this is a transient clone rather than the on-canvas user-placed sheet).  Required only if some code paths need to distinguish them — verify in R0 audit. |
+
+## Lifetime model
+
+The synthetic clones live in the `m_currentSheetPath` vector during
+the walk.  `SCH_SHEET_PATH` already holds raw `SCH_SHEET*`; we just
+need those pointers to remain valid for the consumer.  Two designs:
+
+- **(a) Stack-allocated siblings** — `BuildSheetList` constructs N
+  `SCH_SHEET` copies on its own stack, pushes/pops them during the
+  walk.  Lifetime ends at walk completion; downstream consumers must
+  not store the path past then.  Risky — existing consumers DO store
+  paths (`SCH_SHEET_LIST` itself is a vector of paths).
+- **(b) Schematic-owned clone cache** — the schematic maintains a
+  `std::vector<std::unique_ptr<SCH_SHEET>>` of synthetic clones,
+  rebuilt by `BuildSheetList` and held until the next rebuild.
+  Lifetime matches `SCH_SHEET_LIST`.  Cleaner; small memory cost
+  (one full `SCH_SHEET` struct per synthetic clone).
+
+Recommendation: **(b)**, with the clone cache invalidated on any
+`repeat_count` change or schematic-level mutation that affects the
+hierarchy.
 
 ## Tests
 
 - `qa/eeschema/test_repeated_sheet_hierarchy.cpp` — schematic with
-  one `repeat_count=8` sheet; `Hierarchy()` returns 8 entries with
-  distinct `instance_index`; connection graph distributes bus bits;
-  netlist emits 8 component instances per body part.
+  one `repeat_count=8` sheet; `Schematic().Hierarchy()` returns
+  9 entries (root + 8 instances); each instance has a distinct
+  `Last()->m_Uuid`; all instances point to the same `LastScreen()`.
 
-# Phase R3 — Bus-pin bit distribution at connection-graph build
+# Phase R3 — Bus-pin bit fan-out at connection-graph build
 
 **Goal**: a sheet-pin `DATA[0..7]` on a `repeat=8` sheet routes bit M
-of the external bus to instance M's `DATA` net.
+of the external bus to instance M's `DATA` scalar net.
 
 ## Files touched
 
 | File | Change |
 |---|---|
-| `eeschema/connection_graph.cpp:575-578` (existing `m_hier_pins` insertion) | When parent sheet is repeated AND pin is bus-named with width matching `repeat_count`, insert per-instance pin connections to bus members rather than the full bus |
-| `eeschema/sch_connection.cpp` | Augment bus-resolution to recognize "this pin is a single bit of the parent's bus, selected by `instance_index`" |
+| `eeschema/connection_graph.cpp:575-578, 2892` | When processing a hier-pin's connection during graph build, check if the *containing sheet path's parent* has `repeat_count > 1`.  If so, derive `instance_index` from the path's last KIID position in the parent's `m_repeat_instances`.  For bus-named pins of matching width, select bit `instance_index` as the body's scalar binding; for scalar pins, behavior unchanged (shared). |
+| `eeschema/sch_connection.cpp` | Possibly extend `SCH_CONNECTION` to recognize "this connection is bit-K of a parent-sheet bus" — TBD; may not be needed if the index resolution happens at graph-build time only. |
 
 ## Validation
 
-- Bus pin width must match `repeat_count` exactly.  Mismatch: ERC error.
-- Scalar pins on a repeated sheet shared across all instances (existing
-  semantics; no change).
-- Bus pins on a *non*-repeated sheet behave as today (full bus passes
-  through).
+- Bus pin width != `repeat_count` → ERC error at graph build (not
+  silent).
+- Scalar pin on repeated sheet → connects to all N instances'
+  identical-name net (existing semantics, no change).
+
+## Tests
+
+- `qa/eeschema/test_repeated_sheet_busfanout.cpp` — schematic with
+  one `repeat=4` sheet whose pin is `DATA[0..3]`; verify each
+  instance's body sees a distinct bit of the parent's
+  `DATA_BUS[0..3]`.
+
+# Phase R3.5 — ERC marker dedup
+
+**Goal**: N identical body-faults emit one marker on the ERC report,
+not N.
+
+## Files touched
+
+| File | Change |
+|---|---|
+| `eeschema/erc/erc_report.cpp` (and wherever markers are aggregated) | After ERC walks all paths, dedup the marker list keyed on `(SCH_ITEM->m_Uuid, rule_id)` — markers for the same underlying body item across different synthetic paths collapse to one entry.  The marker's display path is the *template* (on-canvas) sheet, not the first synthetic clone. |
+
+## Subtlety
+
+For markers that DO differ per instance (e.g., a bus-bit fan-out
+violation specific to instance 3), the dedup key should preserve the
+instance.  Most body-internal faults are template-shared; bus-pin
+related faults are per-instance.  Distinguish at marker-creation
+time by tagging the source.
+
+## Tests
+
+- `qa/eeschema/test_repeated_sheet_erc.cpp` — schematic with one
+  `repeat=8` sheet whose body has an intentional ERC violation
+  (e.g., floating pin); verify the marker count is 1, not 8.
 
 # Phase R4 — Netlist export
 
 **Goal**: SPICE deck + KiCad netlist emit N component instances per
-body part on a repeated sheet.
+body part on a repeated sheet — already true by virtue of R2's
+synthetic-path expansion.  This phase is mostly verification +
+SPICE-side handling.
 
 ## Files touched
 
 | File | Change |
 |---|---|
-| `eeschema/netlist_exporters/netlist_exporter_kicad.cpp` | Per-path iteration now sees `repeat_count > 1` paths; emit per-instance refs |
-| `eeschema/netlist_exporters/netlist_exporter_spice.cpp` | Same — emit per-instance X-lines |
-| `eeschema/sch_symbol.cpp:GetRef(SCH_SHEET_PATH*)` | When path has `instance_index > 0`, append the index to the base ref (`U1` → `U1_CH3`) |
+| `eeschema/netlist_exporters/netlist_exporter_kicad.cpp` | No expected changes.  Verify per-path iteration sees N synthetic paths and emits N component entries with distinct refs. |
+| `eeschema/netlist_exporters/netlist_exporter_spice.cpp` | Same — verify N X-lines emit cleanly with the bus-bit-resolved nets per instance. |
 
-## Backward compatibility
+## Tests
 
-Existing netlists (non-repeated) byte-identical.  For repeated
-sheets, the per-instance suffix follows Altium convention but is
-configurable per-project (default: `_CH<N>`, alt: `[<N>]`, `<N>`).
+- `qa/eeschema/test_repeated_sheet_netlist.cpp` — emit netlist for a
+  `repeat=4` sheet; verify 4 instances of each body symbol, each with
+  the correct per-bit net binding on bus pins.
 
 # Phase R5 — klicad-python DSL
 
 **Goal**: `sub.instance("U", repeat=8, **port_map)` returns one
-`SubcircuitInstance` with `repeat_count=8`.  `to_schematic` lays it
-down as ONE `SCH_SHEET` with `repeat_count=8`.
-
-## Files touched (klicad-python)
-
-| File | Change |
-|---|---|
-| `klipy/circuit/_part.py` | `SubcircuitInstance` gains `repeat_count: int = 1` field |
-| `klipy/circuit/_circuit.py` | `Circuit.instance(ref, repeat=1, **port_map)`; validate every bus port has width == `repeat`, every scalar port is shared |
-| `klipy/circuit/_klicad_sch.py:_place_sheet_instances` | Emit ONE `add_sheet` call with `repeat_count=N`; pin width validation |
-| `klipy/circuit/_spice.py` | When emitting `.SUBCKT` body, repeated instances generate N X-lines from a single SubcircuitInstance |
-| `klipy/circuit/_bus.py` | Bus-port-vs-repeat-count width validation |
-
-## New C++ binding
-
-`klicad_native_schematic_state.add_sheet(..., repeat_count=1)` —
-extend existing binding to accept `repeat_count`.  No new binding
-file.
-
-## Tests
-
-- Pure-Python: `sub.instance("U", repeat=8)` validates port widths,
-  emits one SubcircuitInstance with `repeat_count=8`.
-- Live KliCAD: place a `repeat=8` instance, save, reload, verify
-  hierarchy walker enumerates 8 paths, SPICE deck has 8 X-lines.
-
-# Phase R6 — Bidirectional GUI ↔ DSL round-trip
-
-**Goal**: an existing `.kicad_sch` with a `repeat_count` sheet is
-visible to klicad-python's diff machinery as a single
-`SubcircuitInstance` with `repeat_count > 1`.
+`SubcircuitInstance` with `repeat_count=8`.
 
 ## Files touched
 
 | File | Change |
 |---|---|
-| `klipy/circuit/_klicad_sch.py:_emit_one_sheet` | `list_sheets()` now returns per-row `repeat_count`; diff identity stays `(sheet_path, ref)` but a kept sheet's `repeat_count` is part of the demotion check (changed repeat count → remove+add, like file_name mismatch) |
-| `klicad_native_hierarchy.list_sheets` | Include `repeat_count` in each row |
-| `klicad_native_schematic_state.list_symbols` | When a sheet is repeated, the body parts appear under N paths; the diff needs to dedup by (file_name, body_ref) so we don't see "R1×8 to delete" on a fresh start |
+| `klipy/circuit/_part.py` | `SubcircuitInstance` gains `repeat_count: int = 1` |
+| `klipy/circuit/_circuit.py` | `Circuit.instance(ref, repeat=1, **port_map)`; bus port width validation |
+| `klipy/circuit/_bus.py` | New: `validate_port_widths_for_repeat(port_decl, repeat_count)` — each bus port must have width == repeat_count, scalars are shared |
+| `klipy/circuit/_klicad_sch.py:_place_sheet_instances` | Emit ONE `add_sheet(..., repeat_count=N)` call per repeated SubcircuitInstance |
+| `klipy/circuit/_spice.py` | Recursive `.SUBCKT` walker handles `repeat_count` by emitting N X-lines per SubcircuitInstance, with port_map indexed by instance |
 
-# Phase R7 — PCB Multi-Channel tool integration
+## New C++ binding addition
+
+`klicad_native_schematic_state.add_sheet(..., repeat_count=1)` —
+extend the existing `add_sheet` binding to accept the new arg.  No
+new module.
+
+## Tests
+
+- Pure-Python: `sub.instance("U", repeat=8)` validates port widths,
+  emits one SubcircuitInstance with `repeat_count=8`.  Bus port
+  width mismatch raises.
+- Live KliCAD: place a `repeat=8` instance, verify ONE SCH_SHEET on
+  the canvas + 8 synthetic clones from `list_sheets()`.
+- SPICE: emit deck, confirm 8 X-lines with per-bit bus binding.
+
+# Phase R6 — Diff/apply round-trip via the new representation
+
+**Goal**: opening an existing schematic with a repeated sheet exposes
+it to klicad-python's diff as a single `SubcircuitInstance` with
+`repeat_count > 1`, NOT as 8 separate instances.
+
+## Files touched
+
+| File | Change |
+|---|---|
+| `klipy/circuit/_klicad_sch.py:_emit_one_sheet` | When grouping sheet rows by ref, recognize repeat-derived synthetic clones (they share `file_name` AND have UUIDs in a parent's `repeat_instances`); collapse to one virtual row with the discovered `repeat_count`. |
+| `klicad_native_hierarchy.list_sheets` | Per-row include `is_synthetic: bool` and `template_uuid: str` (the on-canvas sheet's KIID) so the Python side can do the collapse. |
+| `klicad_native_schematic_state.list_symbols` | When body parts appear under N synthetic paths, the Python diff dedups them by `(template_path, ref)` for the diff identity key. |
+
+## Demotion rules
+
+- `repeat_count` change (8 → 12) on a kept SubcircuitInstance →
+  per-pin diff on the SCH_SHEET_PIN width (existing H3 mechanism;
+  bus pins gain bits), KIID list extended.
+- `child_filename` change on a kept ref → whole-sheet remove+add
+  (existing H3 rule).
+- Cross-kind change (sheet ↔ symbol with same ref) → remove+add.
+
+# Phase R7 — PCB Multi-Channel verification
 
 **Goal**: upstream's `pcbnew/tools/multichannel_tool.cpp` continues
 to work with the new representation.
 
-## Strategy choice
+**No code change expected.**  Synthetic clones produce distinct
+`SCH_SHEET_PATH::PathHumanReadable` strings → distinct
+`FOOTPRINT::GetSheetname()/GetSheetfile()` after netlist sync → the
+tool's existing peer-detection logic at line 461 sees N peer rule
+areas.
 
-**Strategy A (teach upstream)**: modify `multichannel_tool.cpp` to
-recognize `repeat_count > 1` sheets and treat them as N peer rule
-areas.  Pros: cleanest.  Cons: touches more upstream code; potential
-upstream-merge conflict if KiCad later adopts a different repeat
-representation.
+## Tests
 
-**Strategy B (netlist-time explosion shim)**: leave Multi-Channel
-tool alone; when exporting the netlist for PCB, explode repeated
-sheets into N synthetic sheet paths so PCB sees them as separate.
-Pros: zero churn in Multi-Channel.  Cons: netlist asymmetry (sch
-shows 1 sheet, netlist + PCB show N).
+Open the 8pin design (existing archive at
+`~/projects/driver-board/8pin-archive-2026-05-26/`), refactor it to
+use a single `repeat=8` channel via the new DSL, regenerate the
+schematic + netlist + PCB.  Run Multi-Channel tool, verify it
+identifies 8 peer rule areas matching the originals.
 
-Default: **Strategy B** for the first release (minimize blast
-radius), Strategy A as follow-up if user-visible asymmetry bites.
+If this fails, fall back to the netlist-explosion shim (the old
+plan's Strategy B) — but the audit predicts it won't.
 
-# Open questions (for auditor)
+---
 
-1. **Refdes encoding under repeated sheets**: Altium uses
-   `U1_CH<N>`; Cadence uses `U1<N>` or `U1[<N>]`.  KiCad's existing
-   convention for complex hierarchy is `U1` with the path
-   distinguishing.  Should `U1[3]` (Cadence-style) be the default,
-   or `U1_CH3` (Altium-style), or `U1/3/Q1` (extending the existing
-   KiCad path-ref convention)?
-2. **Bus pin width vs `repeat_count` mismatch**: error or
-   broadcast?  Altium errors; Cadence allows partial connections.
-   Erring is safer; broadcasting is more permissive.
-3. **`SCH_SHEET_PATH` data structure**: extending each segment with
-   an `instance_index` int adds 4-8 bytes per path segment globally
-   — meaningful for designs with deep hierarchies.  Alternative: use
-   a separate `SCH_SHEET_PATH_INSTANCE` wrapper class with the index.
-4. **Hierarchy navigator UX**: a repeated sheet should probably show
-   as one entry with "×N" annotation, expandable to N instances.
-   Upstream's `eeschema/widgets/hierarchy_pane.cpp` would need
-   updating.  Defer to R8 polish phase or include in R2?
-5. **`SCH_SHEET_PIN.GetShape()` semantics under repeat**: input/
-   output/bidirectional shape applies per-bit.  Any visual
-   difference needed in the GUI?
+# Phasing summary
 
-# Out of scope
+| Phase | Scope | Effort |
+|---|---|---|
+| R0 | `Last()` consumer audit | small (no code) |
+| R1 | data model + serialization | one substantial session |
+| R2 | BuildSheetList expansion | one substantial session |
+| R3 | bus-pin fan-out | one substantial session (heaviest — algorithmic) |
+| R3.5 | ERC dedup | half-session |
+| R4 | netlist verification | half-session (mostly tests) |
+| R5 | klicad-python DSL | half-session |
+| R6 | diff round-trip | half-session |
+| R7 | PCB tool verification | half-session (test only) |
 
-- Heterogeneous repeat (different parameters per channel — Altium's
-  `REPEAT(Sym, 1, 8, ChNum)`).  R-phase reserved for homogeneous
-  repeats only.
-- Pre-existing SCH_SHEET items can't be auto-converted to repeated
-  — user must opt in by setting `repeat_count` manually or via DSL.
-- Per-instance net overrides (e.g., "channel 4 has a different
-  flyback diode").  Heterogeneous body content requires either a
-  separate sheet (today's pattern) or a parameterization extension
-  beyond this plan.
-- Hot-reload of `repeat_count` changes in an open schematic.
-  Changing N requires schematic-close + reopen for the hierarchy
-  walker to re-emit paths.
+Total: ~4-5 substantial sessions of focused work, plus audit + test
+passes at each phase boundary.
 
-# Estimated scope
+## Risks remaining
 
-| Phase | Effort estimate |
-|---|---|
-| R1 (data model + serialize) | One substantial session |
-| R2 (hierarchy walker) | One substantial session (heaviest) |
-| R3 (connection graph) | One substantial session |
-| R4 (netlist export) | Half-session |
-| R5 (DSL) | Half-session |
-| R6 (diff round-trip) | Half-session |
-| R7 (PCB tool) | Half-session (Strategy B) or full (Strategy A) |
+1. **Synthetic clone lifetime** (R2 design choice).  Schematic-owned
+   clone cache adds memory + invalidation complexity.  Mitigated by
+   keeping the cache invalidation logic localized to
+   `BuildSheetList`'s callers.
+2. **Bus-pin fan-out** is the only place where `instance_index` has
+   to be derived from the path.  If the connection-graph code
+   doesn't have ready access to the path's parent sheet's
+   `m_repeat_instances`, the indexing logic needs path-context
+   threaded through deeper than the current code expects.
+3. **ERC dedup** can over-collapse if the marker uniqueness key is
+   too coarse, hiding real per-instance issues.  Conservative
+   approach: dedup by `(item_kiid, rule_id, instance_distinguishing_flag)`
+   where the flag is set only for instance-specific faults.
+4. **Annotation re-pass** on `repeat_count` change.  Adding a 9th
+   channel after annotation needs to assign a new ref for that
+   path's body parts without renumbering the existing 8.  The
+   existing complex-hierarchy annotation already does this; verify
+   with a R5 integration test.
 
-Total: ~5-7 sessions of focused work, plus audit + test passes at each
-phase boundary.
+## Out of scope
+
+- Heterogeneous repeat (different parameters per channel).
+- Per-instance net overrides.
+- Hot-reload of `repeat_count` in an open schematic — requires
+  closing + reopening for the hierarchy walker to re-emit paths.
+- Pre-existing N hand-placed sibling sheets auto-converting to a
+  `repeat=N` block.  Requires a user-driven "collapse to repeated
+  sheet" command — defer to polish.
