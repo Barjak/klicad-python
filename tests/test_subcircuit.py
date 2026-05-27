@@ -301,6 +301,23 @@ class TestSubcircuitDSL:
         assert inst.connections["DATA[2]"] == "BUS[2]"
         assert inst.spice_line() == "XU1 K BUS[0] BUS[1] BUS[2] BUS[3] sc"
 
+    def test_repeat_count_field(self):
+        """R5.2: SubcircuitInstance carries a repeat_count int (default 1)."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+
+        # Default — no kwarg, repeat_count is 1.
+        inst_default = SubcircuitInstance(
+            "U_amp1", amp, port_map={"IN": "A", "OUT": "B"},
+        )
+        assert inst_default.repeat_count == 1
+
+        # Explicit — kwarg sets the field.
+        inst_multi = SubcircuitInstance(
+            "U_amp2", amp, port_map={"IN": "A", "OUT": "B"},
+            repeat_count=4,
+        )
+        assert inst_multi.repeat_count == 4
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Recursive .SUBCKT emission
