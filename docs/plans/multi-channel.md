@@ -240,6 +240,7 @@ of the external bus to instance M's `DATA` scalar net.
 | File | Change |
 |---|---|
 | `eeschema/connection_graph.cpp:575-578, 2892` | When processing a hier-pin's connection during graph build, check if the *containing sheet path's parent* has `repeat_count > 1`.  If so, derive `instance_index` from the path's last KIID position in the parent's `m_repeat_instances`.  For bus-named pins of matching width, select bit `instance_index` as the body's scalar binding; for scalar pins, behavior unchanged (shared). |
+| `eeschema/connection_graph.cpp:2895,453,2956` | **R2 audit (F')** flagged: the propagation logic appends `pin->GetParent()` to a path while iterating hier-pins.  `pin->GetParent()` is always the on-canvas template, so paths constructed this way end with the template even when the consumer is a clone slot.  The KIID match at `:2956` then fails for slots 1..N-1.  Fix: when the path's existing last segment is a synthetic clone with matching slot KIID, use the clone in place of `pin->GetParent()`. **Acceptance test**: drive a hier-pin on a `repeat=4` sheet, verify subgraph propagation reaches all 4 child subgraphs. |
 | `eeschema/sch_connection.cpp` | Possibly extend `SCH_CONNECTION` to recognize "this connection is bit-K of a parent-sheet bus" — TBD; may not be needed if the index resolution happens at graph-build time only. |
 
 ## Validation
@@ -359,11 +360,37 @@ it to klicad-python's diff as a single `SubcircuitInstance` with
 **Goal**: upstream's `pcbnew/tools/multichannel_tool.cpp` continues
 to work with the new representation.
 
-**No code change expected.**  Synthetic clones produce distinct
-`SCH_SHEET_PATH::PathHumanReadable` strings → distinct
-`FOOTPRINT::GetSheetname()/GetSheetfile()` after netlist sync → the
-tool's existing peer-detection logic at line 461 sees N peer rule
-areas.
+**~~No code change expected.~~** ❌  R2 audit (concern F) invalidated
+this assumption.  `SCH_SHEET_PATH::PathHumanReadable`
+(`sch_sheet_path.cpp:464-507`) concatenates each segment's
+`SHEET_NAME` field, not its KIID.  All synthetic clones of a
+template share the template's name field — so the human-readable
+path is **identical** across all N slots, e.g. `/Channel/` for every
+slot.  This propagates to `FOOTPRINT::Sheetname` /
+`FOOTPRINT::Sheetfile` (`board_netlist_updater.cpp:662-670`); the
+Multi-Channel tool keys uniqueness on the
+`(Sheetname, Sheetfile)` pair at `multichannel_tool.cpp:461`,
+collapsing all N channels to one rule area.
+
+**Required code change.**  One of:
+
+- **F1 (recommended)** — Modify `PathHumanReadable` to append a slot
+  index suffix when a segment is a synthetic clone.  E.g.
+  `/Channel:1/`, `/Channel:2/`, ...  Slot index derived from the
+  clone's position in the parent's `m_repeatInstances` (slot 0 = no
+  suffix; slots 1..N-1 = `:i`).  Touches only `sch_sheet_path.cpp`
+  and the few netlist exporters that emit human-readable sheet
+  paths.  Backward-compatible for non-repeated sheets.
+- **F2** — Use `KIID_PATH::AsString()` (the KIID-based path) as the
+  keying string in `multichannel_tool.cpp`.  Touches pcbnew; loses
+  human readability in user-facing dialogs.
+- **F3** — Add an explicit per-channel suffix in the sheet name
+  itself when emitting the netlist.  Invasive; affects user-visible
+  sheet names.
+
+F1 is the lowest-impact and most consistent with the plan's
+"existing per-path annotation" decision.  Promote F1 to a
+prerequisite of R7.
 
 ## Tests
 
