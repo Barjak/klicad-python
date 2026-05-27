@@ -1077,55 +1077,93 @@ def _place_sheet_instances(c: "Circuit", kicad,
 
 def _add_sheet_pins(c: "Circuit", kicad,
                      sheet_kiids: dict[str, str],
-                     sheet_positions: dict[str, tuple[float, float]]) -> int:
-    """Add SCH_SHEET_PINs to every freshly-placed SubcircuitInstance.
+                     sheet_positions: dict[str, tuple[float, float]]
+                     ) -> tuple[int, int]:
+    """Per-pin diff: add target pins missing on the sheet, delete pins
+    no longer in the target port list.  Returns (added, removed).
 
-    sheet_positions[ref] gives the (x, y) origin of the SCH_SHEET on
-    the parent canvas — used to compute pin positions on the sheet's
-    left edge, inset from the top.
+    For a fresh sheet, all pins are added at evenly-spaced positions
+    along the left edge starting from the sheet's origin.
 
-    Skips refs whose pins already exist (kept from a prior diff pass).
-    Returns the number of pins added.
+    For a kept sheet with existing pins, the matching pins are left
+    alone (preserves any user-applied repositioning).  New pins land
+    below the bottommost existing pin, on the same edge.
+
+    H3 makes this the spice-idempotence path for port-set changes —
+    SCH_SHEET kiid + position + user-positioned pins all survive
+    unless `child_filename` changes (whole-sheet remove+add).
     """
     import ast
-    n = 0
+    added = 0
+    removed = 0
     for p in c.parts:
         if p.kind != "SUBCIRCUIT":
             continue
         sheet_kiid = sheet_kiids[p.ref]
-        # Check if pins already exist on this sheet (kept from prior pass).
+
+        # Existing pins on this sheet.
         r = kicad.run_python(
             f"import klicad_native_hierarchy as h\n"
             f"h.list_sheet_pins({sheet_kiid!r})"
         )
-        if r.ok:
-            existing_pins = ast.literal_eval(r.result_repr)
-            if existing_pins:
-                # Already pinned (kept ref).  H3 will refine per-pin diff.
-                continue
+        existing_pins: list[dict] = ast.literal_eval(r.result_repr) if r.ok else []
+        existing_by_name = {pin["name"]: pin for pin in existing_pins}
 
-        x_origin, y_origin = sheet_positions[p.ref]
-        for i, port_name in enumerate(p.pin_names):
-            # H2 placeholder: left edge of the sheet, evenly spaced
-            # from top.  KliCAD constrains pin positions to lie on the
-            # sheet's perimeter; we pre-position rather than rely on
-            # any post-hoc snap.
-            x_mm = x_origin
-            y_mm = y_origin + _SHEET_PIN_INSET + i * _SHEET_PIN_DY
+        target_names = list(p.pin_names)
+        target_set = set(target_names)
+        existing_set = set(existing_by_name)
+
+        # Delete pins not in target.
+        for name, pin in existing_by_name.items():
+            if name in target_set:
+                continue
             r = kicad.run_python(
                 f"import klicad_native_schematic_state as ss\n"
-                f"r = ss.add_sheet_pin({sheet_kiid!r}, {port_name!r}, "
+                f"ss.delete_by_kiid({pin['uuid']!r})"
+            )
+            if not r.ok:
+                raise RuntimeError(
+                    f"delete_by_kiid({pin['uuid']}) for sheet {p.ref} "
+                    f"pin {name!r}: {r.exception_traceback}"
+                )
+            removed += 1
+
+        # Add pins in target but not existing.
+        to_add = [n for n in target_names if n not in existing_set]
+        if not to_add:
+            continue
+
+        # Origin for new pins: if existing pins remain, anchor below the
+        # bottommost.  Otherwise use the sheet_positions layout (for
+        # fresh sheets that we just placed).
+        kept_pins = [pin for pin in existing_pins if pin["name"] in target_set]
+        if kept_pins:
+            x_anchor = kept_pins[0]["x_mm"]                          # left-edge x
+            y_anchor = max(pin["y_mm"] for pin in kept_pins) + _SHEET_PIN_DY
+        else:
+            # Fresh sheet — fall back to layout-supplied origin.
+            x_origin, y_origin = sheet_positions.get(p.ref, (0.0, 0.0))
+            x_anchor = x_origin
+            y_anchor = y_origin + _SHEET_PIN_INSET
+
+        for i, name in enumerate(to_add):
+            x_mm = x_anchor
+            y_mm = y_anchor + i * _SHEET_PIN_DY
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"r = ss.add_sheet_pin({sheet_kiid!r}, {name!r}, "
                 f"'left', {x_mm}, {y_mm})\n"
                 f"if not r.get('ok'): raise RuntimeError('add_sheet_pin failed: ' + str(r))\n"
                 f"True"
             )
             if not r.ok:
                 raise RuntimeError(
-                    f"failed pinning sheet {p.ref} port {port_name!r}: "
+                    f"failed pinning sheet {p.ref} port {name!r}: "
                     f"{r.exception_traceback}"
                 )
-            n += 1
-    return n
+            added += 1
+
+    return added, removed
 
 
 def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> int:

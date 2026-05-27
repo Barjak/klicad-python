@@ -312,8 +312,11 @@ class TestMultiInstanceSharing:
 # ──────────────────────────────────────────────────────────────────────────
 
 class TestPortListChange:
-    def test_port_added_demotes_sheet(self, kicad):
-        """Adding a port to a Sub-Circuit forces remove+add of every instance."""
+    def test_port_added_preserves_kiid_via_per_pin_diff(self, kicad):
+        """Adding a port to a Sub-Circuit triggers per-pin diff (H3):
+        the SCH_SHEET kiid + position are PRESERVED; only the new pin is
+        added to the existing sheet.  This is the H3 refinement of the
+        H2 placeholder (which would have force-remove+added the sheet)."""
         # Start with 2-port amp
         _reset_to(kicad, _base_top())
         sheets_before = _list_root_sheets(kicad)
@@ -342,9 +345,70 @@ class TestPortListChange:
         u_amp1_kiid_after = next(s for s in sheets_after
                                    if s["name"] == "U_amp1")["uuid"]
         pins_after = _list_pins_for_sheet(kicad, u_amp1_kiid_after)
-        # Whole-sheet remove+add → kiid changes; pin set now has BIAS.
-        assert u_amp1_kiid_after != u_amp1_kiid_before
+        # H3 per-pin diff: kiid preserved, pin set extended.
+        assert u_amp1_kiid_after == u_amp1_kiid_before, (
+            f"sheet kiid should survive port-set change; got "
+            f"{u_amp1_kiid_before} -> {u_amp1_kiid_after}"
+        )
         assert {p["name"] for p in pins_after} == {"IN", "OUT", "BIAS"}
+
+    def test_port_removed_via_per_pin_diff(self, kicad):
+        """Removing a port deletes that SCH_SHEET_PIN; sheet kiid + other
+        pins survive."""
+        # Start with 3-port amp
+        amp3 = Circuit("amp", ports=["IN", "OUT", "BIAS"])
+        amp3.add_model_lib(STANDARD_MODEL_LIB)
+        amp3.add(R("R1", "IN", "n_base", value="10k"))
+        amp3.add(R("R2", "BIAS", "OUT", value="1k"))
+        amp3.add(NPN("Q1", c="OUT", b="n_base", e="GND"))
+        c3 = Circuit("hierarchy")
+        c3.add_model_lib(STANDARD_MODEL_LIB)
+        c3.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        c3.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        c3.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        c3.add(amp3.instance("U_amp1",
+                             IN="AUDIO_IN", OUT="AUDIO_OUT", BIAS="VCC"))
+        _reset_to(kicad, c3)
+
+        sheets_before = _list_root_sheets(kicad)
+        u_amp1_kiid_before = next(s for s in sheets_before
+                                    if s["name"] == "U_amp1")["uuid"]
+        pins_before = _list_pins_for_sheet(kicad, u_amp1_kiid_before)
+        assert {p["name"] for p in pins_before} == {"IN", "OUT", "BIAS"}
+
+        # Drop BIAS — back to 2-port
+        to_schematic(_base_top(), SCH, kicad=kicad, mode="diff")
+
+        sheets_after = _list_root_sheets(kicad)
+        u_amp1_kiid_after = next(s for s in sheets_after
+                                   if s["name"] == "U_amp1")["uuid"]
+        pins_after = _list_pins_for_sheet(kicad, u_amp1_kiid_after)
+        assert u_amp1_kiid_after == u_amp1_kiid_before
+        assert {p["name"] for p in pins_after} == {"IN", "OUT"}
+
+
+class TestKeptPinPositionSurvives:
+    def test_user_repositioned_pin_survives_diff(self, kicad):
+        """If a pin's position differs from layout (e.g., user repositioned
+        in the GUI), it survives a diff iteration that doesn't change
+        the port set.  The H3 per-pin diff leaves matching pins alone."""
+        _reset_to(kicad, _base_top())
+        sheet = _list_root_sheets(kicad)[0]
+        pin_in = next(p for p in _list_pins_for_sheet(kicad, sheet["uuid"])
+                       if p["name"] == "IN")
+        pin_in_pos_before = (pin_in["x_mm"], pin_in["y_mm"])
+
+        # Re-run identical — should be a no-op for pin positions.
+        to_schematic(_base_top(), SCH, kicad=kicad, mode="diff")
+
+        sheet2 = _list_root_sheets(kicad)[0]
+        pin_in_after = next(p for p in _list_pins_for_sheet(kicad, sheet2["uuid"])
+                            if p["name"] == "IN")
+        assert (pin_in_after["x_mm"], pin_in_after["y_mm"]) == pin_in_pos_before, (
+            f"pin IN should retain position across identity-diff: "
+            f"{pin_in_pos_before} -> "
+            f"({pin_in_after['x_mm']}, {pin_in_after['y_mm']})"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
