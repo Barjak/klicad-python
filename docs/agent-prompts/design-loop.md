@@ -63,6 +63,11 @@ its only contents you need to read are this subdirectory's
   `KliCAD().is_alive()` is a cheap IPC probe.  `Circuit.run_tran()`
   surfaces ngspice stderr if a deck fails to parse — read the
   RuntimeError message before debugging by hand.
+- **DSL reference**: `~/projects/klicad-python/docs/dsl-reference.md`
+  catalogues the full Python surface (Part classes, Circuit methods,
+  schematic / SPICE emission, all `klicad_native_*` bindings reachable
+  via `run_python`).  Consult before reaching for an offline Python
+  workaround.
 
 **Use KliCAD's own tools, not Python reimplementations.**  ERC, the
 SPICE simulator, symbol library reads, Sim.* field manipulation on
