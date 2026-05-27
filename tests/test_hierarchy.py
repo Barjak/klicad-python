@@ -453,10 +453,10 @@ class TestBodyPartChange:
 # ──────────────────────────────────────────────────────────────────────────
 
 class TestBusPortWidthChange:
-    def test_bus_port_width_change_demotes(self, kicad):
-        """DATA[0..3] → DATA[0..7] on a Sub-Circuit definition demotes
-        every instance to remove+add (port set changed)."""
-        # Define a Sub-Circuit with a 4-bit bus port
+    def test_bus_port_width_change_per_pin_diff(self, kicad):
+        """DATA[0..3] → DATA[0..7] on a Sub-Circuit definition: H3 per-
+        pin diff adds the 4 new bit-pins.  Sheet kiid survives (file_name
+        unchanged).  Pin count goes 5 → 9 (CLK + DATA[0..7])."""
         sc4 = Circuit("bus_sc", ports=["CLK", "DATA[0..3]"])
         sc4.add_model_lib(STANDARD_MODEL_LIB)
         for i in range(4):
@@ -473,14 +473,16 @@ class TestBusPortWidthChange:
         _reset_to(kicad, c4)
 
         sheet_before = _list_root_sheets(kicad)[0]
-        pins_before = _list_pins_for_sheet(kicad, sheet_before["uuid"])
+        u_sc_kiid_before = sheet_before["uuid"]
+        pins_before = _list_pins_for_sheet(kicad, u_sc_kiid_before)
         names_before = {p["name"] for p in pins_before}
-        # KliCAD's bus parser may collapse to a range form on the pin name —
-        # either way, we should have 4-bit-equivalent representation.
-        # Just verify the count of pins reflects 5 ports (CLK + DATA[0..3]).
-        assert len(pins_before) >= 1  # at minimum the bus pin
+        # CLK + DATA[0..3] expanded → 5 sheet pins.
+        assert names_before == {"CLK", "DATA[0]", "DATA[1]",
+                                "DATA[2]", "DATA[3]"}, (
+            f"baseline pin set wrong: {names_before}"
+        )
 
-        # Now widen to 8-bit
+        # Widen to 8-bit.
         sc8 = Circuit("bus_sc", ports=["CLK", "DATA[0..7]"])
         sc8.add_model_lib(STANDARD_MODEL_LIB)
         for i in range(8):
@@ -497,17 +499,138 @@ class TestBusPortWidthChange:
         to_schematic(c8, SCH, kicad=kicad, mode="diff")
 
         sheet_after = _list_root_sheets(kicad)[0]
-        # Since the H2 placeholder treats file_name match as identity, and
-        # the file name is unchanged (still "bus_sc.kicad_sch"), the
-        # current implementation actually keeps the sheet — H3 will refine
-        # to per-pin diff that detects port-set changes.  For now, verify
-        # that whatever happens, the schematic is reachable and the pin
-        # count reflects the new wider port.
-        pins_after = _list_pins_for_sheet(kicad, sheet_after["uuid"])
-        # Either the sheet was kept (pins unchanged — old 4-bit) or
-        # remove+add'd (pins replaced — new 8-bit).  Document the H2
-        # behavior so H3 has a clear refinement target.
-        assert len(pins_after) >= 1
+        u_sc_kiid_after = sheet_after["uuid"]
+        pins_after = _list_pins_for_sheet(kicad, u_sc_kiid_after)
+        names_after = {p["name"] for p in pins_after}
+        # H3 contract: sheet kiid preserved, pins extended.
+        assert u_sc_kiid_after == u_sc_kiid_before, (
+            "sheet kiid should survive bus widening"
+        )
+        assert names_after == {"CLK", "DATA[0]", "DATA[1]", "DATA[2]",
+                               "DATA[3]", "DATA[4]", "DATA[5]",
+                               "DATA[6]", "DATA[7]"}, (
+            f"pin set after widen: {names_after}"
+        )
+
+
+class TestHierLabelPositionSurvives:
+    """The H-2 audit finding: port anchors (hier-labels on child sheets)
+    should keep their position across diff iterations so user
+    repositioning is preserved (matches the aesthetic-preservation
+    contract).  Achieved via clear_routing(keep_hier_labels=True) +
+    per-name diff in _emit_port_anchors."""
+
+    def test_anchor_position_survives_identity_diff(self, kicad):
+        """Re-running the same circuit must leave port-anchor hier-labels
+        at the same coordinates."""
+        _reset_to(kicad, _base_top())
+        # Navigate into the amp child sheet and read its hier-labels.
+        child_kiid = _list_root_sheets(kicad)[0]["uuid"]
+        r = kicad.run_python(
+            f"import klicad_native_hierarchy as h; h.push_sheet({child_kiid!r})"
+        )
+        assert r.ok, r.exception_traceback
+        try:
+            r = kicad.run_python(
+                "import klicad_native_schematic_state as ss\n"
+                "import klicad_native_hierarchy as h\n"
+                "ss.list_labels(h.get_current_sheet()['path_string'])"
+            )
+            assert r.ok, r.exception_traceback
+            labels_before = [
+                row for row in ast.literal_eval(r.result_repr)
+                if row["kind"] == "hierarchical"
+            ]
+            pos_before = {row["name"]: (row["x_mm"], row["y_mm"])
+                          for row in labels_before}
+        finally:
+            kicad.run_python("import klicad_native_hierarchy as h; h.pop_sheet()")
+
+        # Re-run identical
+        to_schematic(_base_top(), SCH, kicad=kicad, mode="diff")
+
+        kicad.run_python(
+            f"import klicad_native_hierarchy as h; h.push_sheet({child_kiid!r})"
+        )
+        try:
+            r = kicad.run_python(
+                "import klicad_native_schematic_state as ss\n"
+                "import klicad_native_hierarchy as h\n"
+                "ss.list_labels(h.get_current_sheet()['path_string'])"
+            )
+            assert r.ok
+            labels_after = [
+                row for row in ast.literal_eval(r.result_repr)
+                if row["kind"] == "hierarchical"
+            ]
+            pos_after = {row["name"]: (row["x_mm"], row["y_mm"])
+                         for row in labels_after}
+        finally:
+            kicad.run_python("import klicad_native_hierarchy as h; h.pop_sheet()")
+
+        assert pos_after == pos_before, (
+            f"hier-label positions changed across identity-diff: "
+            f"{pos_before} -> {pos_after}"
+        )
+
+    def test_stale_anchor_removed_on_port_drop(self, kicad):
+        """When a port is removed from the Sub-Circuit definition, the
+        corresponding hier-label inside the child sheet must be deleted
+        (otherwise it lingers as an orphan with no matching sheet pin)."""
+        # Start with 3-port amp (BIAS as 3rd port)
+        amp3 = Circuit("amp", ports=["IN", "OUT", "BIAS"])
+        amp3.add_model_lib(STANDARD_MODEL_LIB)
+        amp3.add(R("R1", "IN", "n_base", value="10k"))
+        amp3.add(R("R2", "BIAS", "OUT", value="1k"))
+        amp3.add(NPN("Q1", c="OUT", b="n_base", e="GND"))
+        c3 = Circuit("hierarchy")
+        c3.add_model_lib(STANDARD_MODEL_LIB)
+        c3.add(V("VCC_SRC", "VCC", "GND", dc=12))
+        c3.add(V("V_IN", "AUDIO_IN", "GND", dc=0.7))
+        c3.add(R("R_LOAD", "AUDIO_OUT", "GND", value="1k"))
+        c3.add(amp3.instance("U_amp1",
+                             IN="AUDIO_IN", OUT="AUDIO_OUT", BIAS="VCC"))
+        _reset_to(kicad, c3)
+
+        # Drop BIAS → 2-port amp
+        to_schematic(_base_top(), SCH, kicad=kicad, mode="diff")
+
+        # Inspect child sheet's hier-labels
+        child_kiid = _list_root_sheets(kicad)[0]["uuid"]
+        kicad.run_python(
+            f"import klicad_native_hierarchy as h; h.push_sheet({child_kiid!r})"
+        )
+        try:
+            r = kicad.run_python(
+                "import klicad_native_schematic_state as ss\n"
+                "import klicad_native_hierarchy as h\n"
+                "ss.list_labels(h.get_current_sheet()['path_string'])"
+            )
+            assert r.ok
+            hier_names = {row["name"]
+                          for row in ast.literal_eval(r.result_repr)
+                          if row["kind"] == "hierarchical"}
+        finally:
+            kicad.run_python("import klicad_native_hierarchy as h; h.pop_sheet()")
+
+        assert "BIAS" not in hier_names, (
+            f"stale BIAS hier-label not cleaned up: {hier_names}"
+        )
+        assert {"IN", "OUT"}.issubset(hier_names)
+
+
+class TestRouteWithHierarchy:
+    """Audit H-1: _route.py must branch on kind=='SUBCIRCUIT' to gather
+    pin positions from list_sheet_pins instead of get_symbol_pin_position
+    (the latter raises on SCH_SHEET_PINs)."""
+
+    def test_route_true_with_hierarchy_no_crash(self, kicad):
+        """to_schematic(route=True) with hierarchy must not crash on the
+        SubcircuitInstance's empty kicad_pin_map."""
+        # Just verify it completes without raising
+        result = to_schematic(_base_top(), SCH, kicad=kicad,
+                              mode="replace", route=True)
+        assert result["ok"]
 
 
 # ──────────────────────────────────────────────────────────────────────────

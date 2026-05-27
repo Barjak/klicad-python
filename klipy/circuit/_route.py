@@ -202,18 +202,49 @@ def _gather_geometry(
     obstacles:    list of (ref, x_min, y_min, x_max, y_max) in mm.
     pin_positions: (ref, spice_pin_name) -> (x_mm, y_mm).
     """
+    import ast
     obstacles: list[tuple[str, float, float, float, float]] = []
     pin_positions: dict[tuple[str, str], tuple[float, float]] = {}
 
     for p in c.parts:
         kiid = placed[p.ref]
 
+        if p.kind == "SUBCIRCUIT":
+            # Sheet instance — bbox derived from sheet pin coordinates;
+            # pin positions come from list_sheet_pins (SCH_SHEET_PINs
+            # aren't reachable through get_symbol_pin_position).
+            r = kicad.run_python(
+                f"import klicad_native_hierarchy as h\n"
+                f"h.list_sheet_pins({kiid!r})"
+            )
+            if not r.ok:
+                continue
+            sheet_pins = ast.literal_eval(r.result_repr)
+            if not sheet_pins:
+                continue
+            xs = [pin["x_mm"] for pin in sheet_pins]
+            ys = [pin["y_mm"] for pin in sheet_pins]
+            x_min = min(xs) - KEEPOUT_MM
+            y_min = min(ys) - KEEPOUT_MM
+            x_max = max(xs) + KEEPOUT_MM
+            y_max = max(ys) + KEEPOUT_MM
+            obstacles.append((p.ref, x_min, y_min, x_max, y_max))
+
+            by_name = {pin["name"]: (pin["x_mm"], pin["y_mm"])
+                       for pin in sheet_pins}
+            # For sheet instances, spice_pin name IS the port name; no
+            # kicad_pin_map indirection (sheets don't have one).
+            for spice_pin in p.connections:
+                if spice_pin in by_name:
+                    pin_positions[(p.ref, spice_pin)] = by_name[spice_pin]
+            continue
+
+        # Scalar symbol path (existing).
         r = kicad.run_python(
             f"import klicad_native_schematic_state as ss\n"
             f"ss.get_symbol_bbox({kiid!r})"
         )
         if r.ok:
-            import ast
             bb = ast.literal_eval(r.result_repr)
             if bb.get("ok"):
                 x = bb["x_mm"] - KEEPOUT_MM
@@ -230,7 +261,6 @@ def _gather_geometry(
             )
             if not r.ok:
                 continue
-            import ast
             pos = ast.literal_eval(r.result_repr)
             if pos.get("ok"):
                 pin_positions[(p.ref, spice_pin)] = (pos["x_mm"], pos["y_mm"])

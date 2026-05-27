@@ -30,10 +30,14 @@ _BUS_RANGE_RE  = re.compile(r"^(\w+)\[(\d+)\.\.(\d+)\]$")
 
 # Implicit-power regex — anything matching these is a global power
 # net, never a bus member or a port.  Mirrors _power_positions() in
-# _klicad_sch.py.
+# _klicad_sch.py.  `V+`/`V-` are the KiCad-canonical names for
+# generic supply rails; including them here prevents them from leaking
+# into a Sub-Circuit's port list when the user reaches for the
+# conventional power-rail name.
 _POWER_RE = re.compile(
     r"^("
     r"GND|VCC|VDD|VSS|VBAT|VBUS"
+    r"|[Vv][+-]"
     r"|[+-]\d.*"
     r"|AGND|DGND|EARTH"
     r")$"

@@ -716,9 +716,13 @@ def _emit_one_sheet(c: "Circuit",
                 )
 
     # Wipe routing on THIS sheet.  Scoped via the sheet_path arg.
+    # Child sheets spare hier-labels (port anchors) — _emit_port_anchors
+    # does a per-name diff that preserves their (possibly user-
+    # positioned) coordinates.  Root has no port anchors to preserve.
+    keep_hier = "True" if (not is_root and c.is_subcircuit) else "False"
     r = kicad.run_python(
         f"import klicad_native_schematic_state as ss\n"
-        f"ss.clear_routing({sheet_path!r})"
+        f"ss.clear_routing({sheet_path!r}, keep_hier_labels={keep_hier})"
     )
     if not r.ok:
         raise RuntimeError(
@@ -911,12 +915,46 @@ def _label_power_pins_only(c: "Circuit", kicad, placed: dict[str, str]) -> int:
     Used when route=True: signal nets get explicit wires from _route;
     power/ground stay label-driven (routing them would dominate the
     sheet — they touch nearly every part).
+
+    Same shape as _label_pins re: kind-branching — sheet instances
+    (SUBCIRCUIT) get pin positions from `list_sheet_pins` since their
+    SCH_SHEET_PINs aren't reachable via get_symbol_pin_position.
     """
+    import ast
     powerlike = {name for name, meta in c.nets.items()
                  if meta.kind in ("power", "ground")}
     n = 0
     for p in c.parts:
         kiid = placed[p.ref]
+
+        if p.kind == "SUBCIRCUIT":
+            # Power-named external nets bound to sheet pins get labels
+            # at the pin's external position; everything else stays
+            # routed.  Position lookup via list_sheet_pins.
+            r = kicad.run_python(
+                f"import klicad_native_hierarchy as h\n"
+                f"h.list_sheet_pins({kiid!r})"
+            )
+            if not r.ok:
+                continue
+            by_name = {pin["name"]: (pin["x_mm"], pin["y_mm"])
+                       for pin in ast.literal_eval(r.result_repr)}
+            for port_name, net_name in p.connections.items():
+                if net_name not in powerlike:
+                    continue
+                if port_name not in by_name:
+                    continue
+                x, y = by_name[port_name]
+                r = kicad.run_python(
+                    f"import klicad_native_schematic_state as ss\n"
+                    f"ss.add_label({x}, {y}, {net_name!r})\n"
+                    f"True"
+                )
+                if r.ok:
+                    n += 1
+            continue
+
+        # Scalar symbol path (existing).
         for spice_pin, net_name in p.connections.items():
             if net_name not in powerlike:
                 continue
@@ -1133,18 +1171,28 @@ def _add_sheet_pins(c: "Circuit", kicad,
         if not to_add:
             continue
 
-        # Origin for new pins: if existing pins remain, anchor below the
-        # bottommost.  Otherwise use the sheet_positions layout (for
-        # fresh sheets that we just placed).
+        # Origin + side for new pins.  Strategy:
+        #   - If kept pins exist, group them by side and anchor new
+        #     pins on whichever side has the most kept pins (so the
+        #     visual layout follows what the user/we last chose).
+        #     Y advances below the bottommost kept pin on that side.
+        #   - Fresh sheet: fall back to sheet_positions layout +
+        #     default "left" side.
         kept_pins = [pin for pin in existing_pins if pin["name"] in target_set]
         if kept_pins:
-            x_anchor = kept_pins[0]["x_mm"]                          # left-edge x
-            y_anchor = max(pin["y_mm"] for pin in kept_pins) + _SHEET_PIN_DY
+            by_side: dict[str, list[dict]] = {}
+            for pin in kept_pins:
+                by_side.setdefault(pin.get("side", "left"), []).append(pin)
+            # Pick the most-populated side; ties broken by sort order.
+            anchor_side = max(by_side, key=lambda s: (len(by_side[s]), s))
+            side_pins = by_side[anchor_side]
+            x_anchor = side_pins[0]["x_mm"]
+            y_anchor = max(pin["y_mm"] for pin in side_pins) + _SHEET_PIN_DY
         else:
-            # Fresh sheet — fall back to layout-supplied origin.
             x_origin, y_origin = sheet_positions.get(p.ref, (0.0, 0.0))
             x_anchor = x_origin
             y_anchor = y_origin + _SHEET_PIN_INSET
+            anchor_side = "left"
 
         for i, name in enumerate(to_add):
             x_mm = x_anchor
@@ -1152,7 +1200,7 @@ def _add_sheet_pins(c: "Circuit", kicad,
             r = kicad.run_python(
                 f"import klicad_native_schematic_state as ss\n"
                 f"r = ss.add_sheet_pin({sheet_kiid!r}, {name!r}, "
-                f"'left', {x_mm}, {y_mm})\n"
+                f"{anchor_side!r}, {x_mm}, {y_mm})\n"
                 f"if not r.get('ok'): raise RuntimeError('add_sheet_pin failed: ' + str(r))\n"
                 f"True"
             )
@@ -1166,21 +1214,68 @@ def _add_sheet_pins(c: "Circuit", kicad,
     return added, removed
 
 
-def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> int:
-    """Inside a child sheet, place ONE hierarchical label per port.
+def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple[int, int]:
+    """Inside a child sheet, ensure one SCH_HIER_LABEL exists per port.
+
+    Per-port-name diff against the existing hier-labels on the current
+    sheet:
+      * Existing hier-label with matching name → leave alone (preserves
+        position; user-positioned anchors survive iterations).
+      * Existing hier-label with a name not in the port set → delete
+        (port removed; stale anchor).
+      * Port name not in existing hier-labels → place new one at the
+        default left-edge anchor position.
+
+    Returns (added, removed).  Caller must have set_current_sheet to
+    the child before invoking; clear_routing on the child must have
+    been called with keep_hier_labels=True so the existing anchors
+    survive long enough for this diff to see them.
 
     KliCAD's net resolver merges any local label inside the body that
-    names the same port-net into the hier-label by name-coincidence.
-    Position doesn't matter for netlist; we use the same left-edge
-    layout as the parent's sheet pins so the schematic reads coherently.
-
-    Caller must have set_current_sheet to the child before invoking.
+    names the same port-net into the hier-label by name-coincidence;
+    position has no semantic effect on the netlist.
     """
-    n = 0
-    for i, port_name in enumerate(sc_def._ports_expanded):
-        # Anchor at a fixed offset on the canvas; user can reposition
-        # post-hoc (we won't move it on subsequent diffs since labels
-        # are wiped by clear_routing).
+    import ast
+    sheet_path = _current_sheet_path(kicad)
+    r = kicad.run_python(
+        f"import klicad_native_schematic_state as ss\n"
+        f"ss.list_labels({sheet_path!r})"
+    )
+    if not r.ok:
+        raise RuntimeError(
+            f"_emit_port_anchors: list_labels failed: {r.exception_traceback}"
+        )
+    existing = [row for row in ast.literal_eval(r.result_repr)
+                if row["kind"] == "hierarchical"]
+    existing_by_name: dict[str, dict] = {}
+    for row in existing:
+        # If duplicate names exist, keep the first; delete the rest below.
+        existing_by_name.setdefault(row["name"], row)
+
+    target_names = list(sc_def._ports_expanded)
+    target_set = set(target_names)
+
+    # Delete stale anchors (name not in port list) + duplicates.
+    removed = 0
+    seen_in_target: set[str] = set()
+    for row in existing:
+        name = row["name"]
+        if name not in target_set or name in seen_in_target:
+            r = kicad.run_python(
+                f"import klicad_native_schematic_state as ss\n"
+                f"ss.delete_by_kiid({row['kiid']!r})"
+            )
+            if r.ok:
+                removed += 1
+        else:
+            seen_in_target.add(name)
+
+    # Place missing anchors.
+    added = 0
+    for i, port_name in enumerate(target_names):
+        if port_name in existing_by_name and port_name in seen_in_target:
+            # Already present at user-positioned coords — leave alone.
+            continue
         x = 4 * _GRID
         y = 4 * _GRID + i * _SHEET_PIN_DY
         r = kicad.run_python(
@@ -1194,8 +1289,8 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> int:
                 f"failed emitting port anchor for {sc_def.name}:{port_name!r}: "
                 f"{r.exception_traceback}"
             )
-        n += 1
-    return n
+        added += 1
+    return added, removed
 
 
 def _place_power_symbols(c: "Circuit", kicad) -> None:
