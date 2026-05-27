@@ -16,7 +16,7 @@ from klipy.circuit._bus import (
     parse_bus_member, parse_bus_range,
     expand_bus_range, expand_one,
     expand_port_decl, expand_port_map,
-    validate_port_decl, validate_spice_name,
+    validate_port_decl, validate_port_widths_for_repeat, validate_spice_name,
 )
 from klipy.circuit._part import SubcircuitInstance
 
@@ -139,6 +139,78 @@ class TestPortMapExpansion:
             expand_port_map(["DATA[0..3]"], {"DATA": "SCALAR"})
 
 
+class TestValidatePortWidthsForRepeat:
+    """R5.1: bus-port width must equal repeat_count; scalars are unrestricted."""
+
+    def test_all_scalar_any_repeat(self):
+        # Scalars are shared across slots — any repeat_count is valid.
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=1)
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=8)
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=60)
+
+    def test_bus_width_matches(self):
+        # DATA[0..7] has width 8; repeat=8 is valid.
+        validate_port_widths_for_repeat(["DATA[0..7]"], repeat_count=8)
+        # Descending range also has width 8.
+        validate_port_widths_for_repeat(["DATA[7..0]"], repeat_count=8)
+        # Width-1 bus (a single member span) with repeat=1.
+        validate_port_widths_for_repeat(["X[0..0]"], repeat_count=1)
+
+    def test_mixed_scalar_and_bus(self):
+        # Mixed ports — bus widths match, scalars unrestricted → OK.
+        validate_port_widths_for_repeat(
+            ["GATE", "OUT", "DATA[0..7]", "EN"],
+            repeat_count=8,
+        )
+
+    def test_multiple_buses_all_match(self):
+        validate_port_widths_for_repeat(
+            ["A[0..3]", "B[0..3]", "C[3..0]", "SHARED"],
+            repeat_count=4,
+        )
+
+    def test_bus_width_mismatch_raises(self):
+        # Bus too narrow.
+        with pytest.raises(ValueError, match="bus width 4 doesn't match repeat_count 8"):
+            validate_port_widths_for_repeat(["DATA[0..3]"], repeat_count=8)
+        # Bus too wide.
+        with pytest.raises(ValueError, match="bus width 16 doesn't match repeat_count 8"):
+            validate_port_widths_for_repeat(["DATA[0..15]"], repeat_count=8)
+
+    def test_one_bus_matches_one_mismatches(self):
+        # First bus matches, second doesn't — must still raise.
+        with pytest.raises(ValueError, match=r"'B\[0\.\.3\]'.*bus width 4"):
+            validate_port_widths_for_repeat(
+                ["A[0..7]", "B[0..3]"],
+                repeat_count=8,
+            )
+
+    def test_reject_non_positive_repeat(self):
+        with pytest.raises(ValueError, match="repeat_count must be >= 1"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=0)
+        with pytest.raises(ValueError, match="repeat_count must be >= 1"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=-1)
+
+    def test_reject_non_int_repeat(self):
+        with pytest.raises(ValueError, match="repeat_count must be an int"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=8.0)  # type: ignore[arg-type]
+        # bool is technically an int subclass — explicitly rejected.
+        with pytest.raises(ValueError, match="repeat_count must be an int"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=True)  # type: ignore[arg-type]
+
+    def test_propagates_port_decl_errors(self):
+        # Malformed port_decl is caught by the underlying validate_port_decl.
+        with pytest.raises(ValueError, match="power"):
+            validate_port_widths_for_repeat(["IN", "GND"], repeat_count=1)
+        with pytest.raises(ValueError, match="(duplicate|used twice)"):
+            validate_port_widths_for_repeat(["IN", "IN"], repeat_count=1)
+
+    def test_isolated_bus_member_is_scalar_like(self):
+        # An isolated DATA[3] (not a range) is treated as a scalar port —
+        # it doesn't span a width, so any repeat_count is OK.
+        validate_port_widths_for_repeat(["DATA[3]", "IN"], repeat_count=8)
+
+
 class TestSpiceNameValidation:
     def test_simple_refs(self):
         validate_spice_name("R1", kind="ref")
@@ -228,6 +300,82 @@ class TestSubcircuitDSL:
         )
         assert inst.connections["DATA[2]"] == "BUS[2]"
         assert inst.spice_line() == "XU1 K BUS[0] BUS[1] BUS[2] BUS[3] sc"
+
+    def test_repeat_count_field(self):
+        """R5.2: SubcircuitInstance carries a repeat_count int (default 1)."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+
+        # Default — no kwarg, repeat_count is 1.
+        inst_default = SubcircuitInstance(
+            "U_amp1", amp, port_map={"IN": "A", "OUT": "B"},
+        )
+        assert inst_default.repeat_count == 1
+
+        # Explicit — kwarg sets the field.
+        inst_multi = SubcircuitInstance(
+            "U_amp2", amp, port_map={"IN": "A", "OUT": "B"},
+            repeat_count=4,
+        )
+        assert inst_multi.repeat_count == 4
+
+    # ── R5.3: Circuit.instance(repeat=N, ...) ────────────────────────────
+
+    def test_instance_repeat_default(self):
+        """repeat=1 (default) behaves exactly like pre-R5.3."""
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        sub.add(R("R1", "IN", "OUT"))
+        inst = sub.instance("U1", IN="A", OUT="B")
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 1
+        # Behaviour unchanged: pin_names / connections / spice_line.
+        assert inst.pin_names == ("IN", "OUT")
+        assert inst.connections == {"IN": "A", "OUT": "B"}
+        assert inst.spice_line() == "XU1 A B amp"
+
+    def test_instance_repeat_n(self):
+        """repeat=4 emits one SubcircuitInstance with repeat_count=4."""
+        sub = Circuit(
+            "ch",
+            ports=["GATE[0..3]", "OUT[0..3]", "DATA[0..3]"],  # all bus, width 4
+        )
+        sub.add(R("R1", "GATE[0]", "OUT[0]"))
+        inst = sub.instance(
+            "U_CH",
+            repeat=4,
+            GATE="GATE_BUS[0..3]",
+            OUT="OUT_BUS[0..3]",
+            DATA="DATA_BUS[0..3]",
+        )
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 4
+        # Underlying port expansion is unchanged — repeat is a marker,
+        # downstream emitters (R5.4/R5.5) consume it.
+        assert inst.connections["GATE[2]"] == "GATE_BUS[2]"
+        assert inst.connections["DATA[0]"] == "DATA_BUS[0]"
+
+    def test_instance_repeat_scalar_and_bus_mix(self):
+        """Scalars are shared across slots; bus ports must match repeat."""
+        sub = Circuit("ch", ports=["EN", "DATA[0..3]"])  # EN scalar, DATA width 4
+        sub.add(R("R1", "EN", "DATA[0]"))
+        inst = sub.instance(
+            "U_CH", repeat=4, EN="EN_TOP", DATA="DATA_BUS[0..3]",
+        )
+        assert inst.repeat_count == 4
+        assert inst.connections["EN"] == "EN_TOP"
+        assert inst.connections["DATA[3]"] == "DATA_BUS[3]"
+
+    def test_instance_repeat_bus_width_mismatch_raises(self):
+        """A bus port whose width != repeat raises (per R5.1's validator)."""
+        sub = Circuit("ch", ports=["DATA[0..2]"])  # width 3
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U_CH", repeat=4, DATA="DATA_BUS[0..2]")
+
+    def test_instance_repeat_rejects_non_positive(self):
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=0, IN="A", OUT="B")
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=-2, IN="A", OUT="B")
 
 
 # ──────────────────────────────────────────────────────────────────────────

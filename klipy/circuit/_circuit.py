@@ -162,7 +162,7 @@ class Circuit:
         """
         return self.ports is not None
 
-    def instance(self, ref: str, **port_map: str) -> "Part":
+    def instance(self, ref: str, *, repeat: int = 1, **port_map: str) -> "Part":
         """Return a SubcircuitInstance binding this Sub-Circuit's ports to
         external nets in a parent Circuit.  Add via `parent.add(...)`:
 
@@ -176,6 +176,16 @@ class Circuit:
 
         port_map keys may be scalar port names, base names of bus
         ports, or full bus-range forms.  See _bus.expand_port_map.
+
+        repeat: multi-channel marker (R5.3).  ``repeat=1`` (default) emits
+            a single instance, identical to pre-R5.3 behaviour.  ``repeat=N``
+            (N > 1) emits ONE SubcircuitInstance with ``repeat_count=N``,
+            representing N parallel slots of the same Sub-Circuit; downstream
+            schematic/SPICE expansion (R5.4, R5.5) consume the marker.
+            Every bus port on the definition must span exactly ``N`` members
+            (so bit ``i`` of the bus binds to slot ``i``); scalar ports are
+            shared across all slots.  Mismatch → ValueError (per R5.1's
+            ``validate_port_widths_for_repeat``).
         """
         if not self.is_subcircuit:
             raise ValueError(
@@ -184,8 +194,18 @@ class Circuit:
                 f"be instantiated.  To make it a Sub-Circuit, construct as "
                 f"Circuit({self.name!r}, ports=[...])."
             )
+        # When repeat > 1, validate the definition's port widths against
+        # the requested repeat count BEFORE constructing the instance so
+        # the error surfaces at the offending .instance() call.  repeat=1
+        # is the trivial case and skips validation to keep error messages
+        # for malformed port_decls anchored at Circuit() construction.
+        if repeat != 1:
+            from ._bus import validate_port_widths_for_repeat
+            validate_port_widths_for_repeat(self._port_decl, repeat)
         from ._part import SubcircuitInstance
-        return SubcircuitInstance(ref, self, port_map=port_map)
+        return SubcircuitInstance(
+            ref, self, port_map=port_map, repeat_count=repeat,
+        )
 
     # ---- net management ----
 
