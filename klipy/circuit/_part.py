@@ -652,6 +652,12 @@ class SubcircuitInstance(Part):
     # schematic/SPICE expansion).
     repeat_count: int = 1
 
+    # R5.4: stable KIIDs for the (repeat_count - 1) extra sheet-instance
+    # paths emitted by the C++ `add_sheet` binding when repeat_count > 1.
+    # Populated lazily by `_place_sheet_instances` on first emit and
+    # reused on subsequent re-emits so multi-call diffs are idempotent.
+    repeat_instances: list[str] = field(default_factory=list)
+
     def __init__(self, ref: str, definition, *,
                  port_map: dict[str, str],
                  footprint: str = "",
@@ -667,6 +673,7 @@ class SubcircuitInstance(Part):
         self.definition = definition
         self.subckt = definition.name
         self.repeat_count = repeat_count
+        self.repeat_instances = []
         # Expand port_map against the definition's port_decl.
         from ._bus import expand_port_map, expand_port_decl
         expanded = expand_port_map(definition._port_decl, port_map)

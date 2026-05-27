@@ -1088,6 +1088,7 @@ def _place_sheet_instances(c: "Circuit", kicad,
     pins are emitted by _add_sheet_pins after placement.
     """
     import ast
+    import uuid
     placed: dict[str, str] = dict(skip_refs)
     for p in c.parts:
         if p.kind != "SUBCIRCUIT":
@@ -1098,9 +1099,24 @@ def _place_sheet_instances(c: "Circuit", kicad,
         filename = sub_to_filename[id(sc_def)].name   # bare name, not full path
         w, h = _sheet_size_for(sc_def)
         x, y = positions[p.ref]
+        # R5.4: multi-channel sheet — pass repeat_count + stable instance
+        # KIIDs to the C++ binding.  Lazy-populate p.repeat_instances on
+        # first emit so subsequent re-emits reuse the same KIIDs.
+        repeat_count = getattr(p, "repeat_count", 1)
+        if repeat_count > 1:
+            if not getattr(p, "repeat_instances", None):
+                p.repeat_instances = [
+                    str(uuid.uuid4()) for _ in range(repeat_count - 1)
+                ]
+            extra_kwargs = (
+                f", repeat_count={repeat_count}"
+                f", repeat_instances={p.repeat_instances!r}"
+            )
+        else:
+            extra_kwargs = ""
         snippet = (
             f"import klicad_native_schematic_state as ss\n"
-            f"r = ss.add_sheet({p.ref!r}, {filename!r}, {x}, {y}, {w}, {h})\n"
+            f"r = ss.add_sheet({p.ref!r}, {filename!r}, {x}, {y}, {w}, {h}{extra_kwargs})\n"
             f"if not r.get('ok'): raise RuntimeError(f'add_sheet failed for {p.ref}: ' + str(r))\n"
             f"r['kiid']"
         )

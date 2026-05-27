@@ -669,3 +669,128 @@ class TestSubcircuitNgspice:
         assert "xub.n1" in result
         # Different stimulus → different internal node values
         assert result["xua.n1"][-1] != result["xub.n1"][-1]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# R5.4: _place_sheet_instances emits add_sheet with repeat kwargs
+# ──────────────────────────────────────────────────────────────────────────
+
+class _FakeRunPythonResult:
+    """Minimal stand-in for klipy.klicad.RunPythonResult."""
+    def __init__(self, result_repr: str):
+        self.ok = True
+        self.stdout = ""
+        self.stderr = ""
+        self.result_repr = result_repr
+        self.exception_traceback = ""
+
+
+class _FakeKiCad:
+    """Captures every run_python() snippet emitted by callers.
+
+    Returns a fixed kiid literal so callers that ast.literal_eval the
+    result get a non-empty string back.
+    """
+    def __init__(self, kiid: str = "fake-sheet-kiid"):
+        self.snippets: list[str] = []
+        self._kiid = kiid
+
+    def run_python(self, code: str) -> _FakeRunPythonResult:
+        self.snippets.append(code)
+        return _FakeRunPythonResult(repr(self._kiid))
+
+
+class TestPlaceSheetInstancesRepeatEmit:
+    """R5.4: _place_sheet_instances passes repeat_count + repeat_instances."""
+
+    def _make_top(self, repeat: int) -> "Circuit":
+        ch = Circuit(
+            "ch",
+            ports=["EN", "GATE[0..3]", "OUT[0..3]"],
+        )
+        ch.add(R("R1", "GATE[0]", "OUT[0]", value="10k"))
+        top = Circuit("top")
+        kwargs = dict(EN="EN_TOP",
+                      GATE="GATE_BUS[0..3]",
+                      OUT="OUT_BUS[0..3]")
+        if repeat > 1:
+            top.add(ch.instance("U_CH", repeat=repeat, **kwargs))
+        else:
+            top.add(ch.instance("U_CH", **kwargs))
+        return top
+
+    def _run_place(self, top, sub_filename: str = "ch.kicad_sch"):
+        from klipy.circuit._klicad_sch import _place_sheet_instances
+        from pathlib import Path
+        # The function indexes sub_to_filename by id(definition).  Pull
+        # the definition off the single SUBCIRCUIT part.
+        sub_parts = [p for p in top.parts if p.kind == "SUBCIRCUIT"]
+        assert len(sub_parts) == 1
+        inst = sub_parts[0]
+        sub_to_filename = {id(inst.definition): Path(sub_filename)}
+        positions = {inst.ref: (50.0, 60.0)}
+        kicad = _FakeKiCad()
+        placed = _place_sheet_instances(
+            top, kicad, sub_to_filename, positions, skip_refs={},
+        )
+        return inst, kicad, placed
+
+    def test_repeat_one_omits_kwargs(self):
+        """repeat_count == 1 → no repeat_count / repeat_instances kwargs."""
+        top = self._make_top(repeat=1)
+        inst, kicad, _placed = self._run_place(top)
+        assert inst.repeat_count == 1
+        assert inst.repeat_instances == []
+        # Find the add_sheet snippet — should be exactly one.
+        sheet_snips = [s for s in kicad.snippets if "ss.add_sheet(" in s]
+        assert len(sheet_snips) == 1
+        snip = sheet_snips[0]
+        assert "repeat_count=" not in snip
+        assert "repeat_instances=" not in snip
+
+    def test_repeat_n_emits_kwargs(self):
+        """repeat_count == 4 → repeat_count=4, repeat_instances of length 3."""
+        top = self._make_top(repeat=4)
+        inst, kicad, _placed = self._run_place(top)
+        assert inst.repeat_count == 4
+        # Field populated lazily with N-1 stable KIIDs.
+        assert len(inst.repeat_instances) == 3
+        for k in inst.repeat_instances:
+            assert isinstance(k, str) and len(k) > 0
+        # Snippet contains the new kwargs.
+        sheet_snips = [s for s in kicad.snippets if "ss.add_sheet(" in s]
+        assert len(sheet_snips) == 1
+        snip = sheet_snips[0]
+        assert "repeat_count=4" in snip
+        assert "repeat_instances=" in snip
+        for k in inst.repeat_instances:
+            assert k in snip
+
+    def test_repeat_instances_stable_across_reemits(self):
+        """Re-running emit reuses the same N-1 KIIDs (idempotent)."""
+        top = self._make_top(repeat=4)
+        inst, kicad1, _ = self._run_place(top)
+        first_kiids = list(inst.repeat_instances)
+        assert len(first_kiids) == 3
+        # Re-emit on the SAME top circuit (same inst object).
+        _, kicad2, _ = self._run_place(top)
+        assert inst.repeat_instances == first_kiids
+        # Both emitted snippets must reference the identical KIIDs.
+        snip1 = [s for s in kicad1.snippets if "ss.add_sheet(" in s][0]
+        snip2 = [s for s in kicad2.snippets if "ss.add_sheet(" in s][0]
+        for k in first_kiids:
+            assert k in snip1
+            assert k in snip2
+
+    def test_preseeded_repeat_instances_respected(self):
+        """If repeat_instances is pre-populated, emit reuses it verbatim."""
+        top = self._make_top(repeat=4)
+        sub_parts = [p for p in top.parts if p.kind == "SUBCIRCUIT"]
+        inst = sub_parts[0]
+        preset = ["aaa-1", "bbb-2", "ccc-3"]
+        inst.repeat_instances = list(preset)
+        _, kicad, _ = self._run_place(top)
+        assert inst.repeat_instances == preset
+        snip = [s for s in kicad.snippets if "ss.add_sheet(" in s][0]
+        for k in preset:
+            assert k in snip
