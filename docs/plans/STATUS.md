@@ -151,31 +151,65 @@ synthetic clones.
 
 ## What's next (paused mid-feature)
 
-### R1 — SCH_SHEET data model + serialization ⏳ NEXT
+### R1 — SCH_SHEET data model + serialization ✅ COMPLETE (KliCAD `145c33722c`)
 
-Where to pick up.  Files to touch:
-- `eeschema/sch_sheet.h` / `.cpp`: add `m_repeat_count: int = 1`,
-  `m_repeat_instances: std::vector<KIID>`, `IsSynthetic()`,
-  `GetTemplate()`.
-- `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr_parser.cpp`:
-  parse `(repeat_count N)` + `(repeat_instances (uuid ...) ...)`.
-  **Pre-verify**: the existing parser's behavior on unknown tokens
-  at sheet level — the auditor flagged this as the prior plan's
-  unverified claim.
-- `eeschema/sch_io/kicad_sexpr/sch_io_kicad_sexpr.cpp`: emit both
-  tokens when `repeat_count > 1`; mirror the `sheet_instances`
-  pattern at line 1693.
-- `eeschema/sch_file_versions.h`: bump `SEXPR_SCHEMATIC_FILE_VERSION`.
-- `eeschema/sch_sheet.cpp` paint: render "×N" decoration in
-  top-right corner when `repeat_count > 1`.
-- `qa/eeschema/test_sch_sheet_repeat.cpp`: round-trip tests.
+Landed:
+- `SCH_SHEET::m_repeatCount`, `m_repeatInstances`, getters/setters.
+- `SCH_SHEET::IsSynthetic()` / `GetTemplate()` / `MarkSynthetic()`
+  — the R0 audit's prerequisites for R2's hierarchy-navigator
+  rename guard.
+- Copy ctor + swapData + operator== updated; synthetic state
+  (m_isSynthetic, m_template) is deliberately NOT copied / swapped
+  / compared — it's identity, not data.
+- Sexpr emit: `(repeat_count N)` + `(repeat_instances (uuid ...))`
+  in `saveSheet`, gated on N > 1 (default schematics are byte-
+  identical to pre-R1).
+- Sexpr parse: new `case T_repeat_count` + `case T_repeat_instances`
+  arms in `parseSheet`.  Verified: the parser's `default` arm
+  throws via `Expecting()` — unknown tokens are NOT silently
+  dropped, which is why the file format version bump is necessary.
+- New keywords `repeat_count`, `repeat_instances` in
+  `schematic.keywords`.
+- File format `SEXPR_SCHEMATIC_FILE_VERSION` bumped 20260326 →
+  20260526 ("Sheet repeat instances (multi-channel)").
+- `SCH_PAINTER::draw` paints "×N" in the sheet's top-right corner
+  when repeat_count > 1; same bbox.
+- `qa/tests/eeschema/test_sch_sheet.cpp` gained 6 R1 test cases.
+  All 11 SchSheet cases pass.  Related suites (SchSheetList,
+  SchSheetPath, Issue23403SharedSubsheetScreen, SaveasCopySubsheets,
+  FlatHierarchy) continue to pass (15 cases).
+
+### R2 — `BuildSheetList` synthetic expansion ⏳ NEXT
+
+Where to pick up.  Touch:
+- `eeschema/sch_sheet_path.cpp:984-1059` (`BuildSheetList`) — when
+  pushing a child SCH_SHEET, check `GetRepeatCount()`.  If > 1,
+  push `repeat_count` synthetic siblings instead of just the one,
+  each carrying a m_Uuid from the parent's m_repeatInstances slot
+  (slot 0 is the on-canvas sheet's own m_Uuid; slots 1..N-1 come
+  from m_repeatInstances).
+- `eeschema/schematic.h` / `.cpp`: own a `std::vector<
+  std::unique_ptr<SCH_SHEET>>` clone cache; rebuild on
+  `BuildSheetList`, invalidate on any repeat_count change or
+  hierarchy mutation.
+- Synthetic clones use `MarkSynthetic(template)` so the navigator
+  rename guard (`hierarchy_pane.cpp:727/750/975-978` per R0)
+  forwards writes to the template.
+- `qa/eeschema/test_repeated_sheet_hierarchy.cpp` — schematic with
+  one `repeat_count=8` sheet; Schematic().Hierarchy() returns 9
+  entries (root + 8); each clone has distinct Last()->m_Uuid; all
+  point to the same LastScreen().
 
 Effort: one substantial session.
 
-### R2 onward (sketched)
+R0 audit (`docs/plans/multi-channel-r0.md`) confirms 30 trivial
+read-sites are safe, 1 per-instance identity site (the m_Uuid
+read in connection_graph.cpp:2951) Just Works for clones, and
+the 4 rename writes need the `IsSynthetic()` guard R1 already
+shipped.
 
-- **R2** — `BuildSheetList` synthetic expansion.  Schematic-owned
-  clone cache; invalidate on repeat_count change.
+### R3 onward (sketched)
+
 - **R3** — Connection-graph bus-pin bit fan-out.  Algorithmically
   the heaviest phase.
 - **R3.5** — ERC marker dedup by `(item_kiid, rule_id,
