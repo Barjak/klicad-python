@@ -66,6 +66,85 @@ def _rewrite_grounds_in_part(p) -> str:
     return " ".join([head, *rewritten, *tail])
 
 
+def _emit_instance_lines(p) -> list[str]:
+    """Emit one or N X-lines for a SubcircuitInstance, with grounds rewritten.
+
+    For ``repeat_count == 1`` (the default), emits a single X-line identical
+    to ``_rewrite_grounds_in_part(p)``.
+
+    For ``repeat_count > 1`` (R5.5 multi-channel), emits N X-lines
+    ``X<ref>0``, ``X<ref>1``, …, ``X<ref>{N-1}``.  Each slot K's line
+    passes:
+
+      - For each scalar port: the connection as-is (shared across slots).
+      - For each bus port ``BASE[0..N-1]`` (declared as a bus range on the
+        Sub-Circuit definition): the bit-K external net at EVERY
+        bus-member position.  Inside the sub-circuit's body, all
+        ``BASE[i]`` references then resolve to the same scalar net per
+        slot — the bus-pin-fan-out semantics that match KiCad's repeated-
+        sheet model: one bus bit per channel, with the body treating the
+        bus name as a scalar within each instance.
+
+    Caller must pass a Part with ``kind == "SUBCIRCUIT"`` (a
+    SubcircuitInstance).  Other Part kinds should go through
+    ``_rewrite_grounds_in_part`` directly.
+    """
+    from ._bus import is_bus_range, parse_bus_range
+
+    repeat = getattr(p, "repeat_count", 1)
+    if repeat == 1:
+        return [_rewrite_grounds_in_part(p)]
+
+    # Identify which port_decl entries on the definition are bus ranges.
+    # Per R5.1's validation, every such range has width == repeat_count, so
+    # we can index it by slot K directly.  Build base→members so the X-line
+    # emission can look up "which expanded port names came from this bus".
+    defn = p.definition
+    bus_port_members: dict[str, list[str]] = {}    # base -> [BASE[0], BASE[1], ...]
+    for port in defn._port_decl:
+        if is_bus_range(port):
+            base, low, high = parse_bus_range(port)  # type: ignore[misc]
+            bus_port_members[base] = [f"{base}[{i}]" for i in range(low, high + 1)]
+
+    # For each bus base, the external bus connection is the same across all
+    # bus members (because expand_port_map ties them together in declaration
+    # order).  Grab the bit-K connection by indexing into the members.
+    x_ref_root = p._x_ref()  # "X<ref>" (or "<ref>" if user already prefixed with X)
+    # Strip the leading 'X' so we can re-emit as 'X<ref><k>' uniformly.
+    # _x_ref guarantees the prefix; chop one char.
+    ref_no_x = x_ref_root[1:] if x_ref_root[:1].upper() == "X" else x_ref_root
+
+    lines: list[str] = []
+    for k in range(repeat):
+        slot_nets: list[str] = []
+        for pin in p.pin_names:
+            # Determine if this pin came from a bus port; if so, slot K
+            # passes the bit-K external net.  Otherwise (scalar port), use
+            # the connection as-is.
+            from ._bus import parse_bus_member
+            parsed = parse_bus_member(pin)
+            if parsed is not None and parsed[0] in bus_port_members:
+                base = parsed[0]
+                bit_k_member = bus_port_members[base][k]
+                net = p.connections[bit_k_member]
+            else:
+                net = p.connections[pin]
+            slot_nets.append(_to_spice_net(net))
+        lines.append(f"X{ref_no_x}{k} {' '.join(slot_nets)} {p.subckt}")
+    return lines
+
+
+def _emit_part_lines(p) -> list[str]:
+    """Render any Part to its SPICE element line(s), with grounds rewritten.
+
+    Most parts emit a single line.  ``SubcircuitInstance`` with
+    ``repeat_count > 1`` emits N X-lines via ``_emit_instance_lines``.
+    """
+    if getattr(p, "kind", "") == "SUBCIRCUIT" and getattr(p, "repeat_count", 1) > 1:
+        return _emit_instance_lines(p)
+    return [_rewrite_grounds_in_part(p)]
+
+
 def _reachable_subcircuit_defs(c: "Circuit") -> list["Circuit"]:
     """Walk c's parts (and transitively any Sub-Circuit bodies) and return
     each distinct definition Circuit, once, in first-seen order.
@@ -132,9 +211,11 @@ def _emit_subckt_block(defn: "Circuit") -> list[str]:
     # Inline .model cards (scoped to this .SUBCKT)
     for m in defn.models:
         lines.append("  " + m.spice_line())
-    # Body element lines
+    # Body element lines.  SubcircuitInstance with repeat_count > 1 expands
+    # to N X-lines per the multi-channel semantics (R5.5).
     for p in defn.parts:
-        lines.append("  " + _rewrite_grounds_in_part(p))
+        for line in _emit_part_lines(p):
+            lines.append("  " + line)
     lines.append(f".ENDS {defn.name}")
     return lines
 
@@ -235,10 +316,11 @@ def to_spice_deck(c: "Circuit", *, self_running: bool = True, kicad=None) -> str
         lines.extend(_emit_subckt_block(defn))
 
     # Root element lines, in insertion order so the deck is human-diffable.
+    # SubcircuitInstance with repeat_count > 1 expands to N X-lines (R5.5).
     if c.parts:
         lines.append("")
         for p in c.parts:
-            lines.append(_rewrite_grounds_in_part(p))
+            lines.extend(_emit_part_lines(p))
 
     # Initial conditions
     if c.initial_conditions:

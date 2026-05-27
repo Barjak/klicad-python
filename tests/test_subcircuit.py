@@ -483,6 +483,118 @@ class TestSubcktEmission:
         assert ".include /tmp/vendor_amp.lib" in deck
 
 
+class TestSpiceRepeatExpansion:
+    """R5.5: SPICE deck emits N X-lines for SubcircuitInstance(repeat=N)."""
+
+    def _ch(self) -> Circuit:
+        # 4-channel sub-circuit with one bus port and one scalar port.
+        # Body references a single bus member (GATE[0]) — after R5.5
+        # expansion, each slot's X-line wires every GATE[i] position to
+        # bit-K of the external bus, so the body's GATE[0] resolves to
+        # the per-channel scalar.
+        ch = Circuit("ch", ports=["EN", "GATE[0..3]", "OUT[0..3]"])
+        ch.add(R("R1", "GATE[0]", "OUT[0]", value="10k"))
+        return ch
+
+    def _top_repeat4(self) -> Circuit:
+        ch = self._ch()
+        top = Circuit("top")
+        top.add(V("V_EN", "EN_TOP", "GND", dc=5))
+        top.add(ch.instance(
+            "U_CH", repeat=4,
+            EN="EN_TOP",
+            GATE="GATE_BUS[0..3]",
+            OUT="OUT_BUS[0..3]",
+        ))
+        # Pull-down each OUT bit so root validation sees them referenced.
+        for k in range(4):
+            top.add(R(f"RL{k}", f"OUT_BUS[{k}]", "GND", value="1k"))
+        # Drive each GATE bit so root validation sees them referenced.
+        for k in range(4):
+            top.add(V(f"V_G{k}", f"GATE_BUS[{k}]", "GND", dc=0))
+        return top
+
+    def test_emits_n_x_lines(self):
+        deck = self._top_repeat4().to_spice_deck()
+        # Four X-lines with refs ending 0/1/2/3.
+        for k in range(4):
+            assert f"XU_CH{k} " in deck, f"missing XU_CH{k} in deck:\n{deck}"
+        # And NO bare "XU_CH " (the unsuffixed form).
+        assert "XU_CH " not in deck
+
+    def test_each_x_line_uses_bit_k_bus_net(self):
+        deck = self._top_repeat4().to_spice_deck()
+        # Slot K's X-line must contain GATE_BUS[K] and OUT_BUS[K] (and the
+        # scalar EN_TOP).  Pull out each X-line and check.
+        for k in range(4):
+            line = next(
+                ln for ln in deck.splitlines()
+                if ln.startswith(f"XU_CH{k} ")
+            )
+            assert "EN_TOP" in line, line
+            # The bus-bit-K nets are present...
+            assert f"GATE_BUS[{k}]" in line, line
+            assert f"OUT_BUS[{k}]" in line, line
+            # ...and no other bus bits leak into this slot's X-line.
+            for other in range(4):
+                if other == k:
+                    continue
+                assert f"GATE_BUS[{other}]" not in line, (
+                    f"slot {k} should not see GATE_BUS[{other}]: {line}"
+                )
+                assert f"OUT_BUS[{other}]" not in line, (
+                    f"slot {k} should not see OUT_BUS[{other}]: {line}"
+                )
+
+    def test_repeat_1_unchanged(self):
+        """repeat=1 (default) still emits a single X-line — unchanged."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+        amp.add(R("R1", "IN", "OUT", value="10k"))
+        top = Circuit("top")
+        top.add(V("V1", "A", "GND", dc=1))
+        top.add(amp.instance("U1", IN="A", OUT="B"))
+        top.add(R("RL", "B", "GND", value="1k"))
+        deck = top.to_spice_deck()
+        # Single X-line, no suffix-numbered variants.
+        assert "XU1 A B amp" in deck
+        assert "XU10" not in deck
+        assert "XU11" not in deck
+
+    def test_repeat_in_nested_subckt_body(self):
+        """A repeat=N instance inside another Sub-Circuit's body expands
+        to N X-lines inside that .SUBCKT block."""
+        inner = self._ch()
+
+        # Wrap the repeat instance inside an outer Sub-Circuit.
+        outer = Circuit("outer", ports=["EN_O", "GATE_O[0..3]", "OUT_O[0..3]"])
+        outer.add(inner.instance(
+            "U_INNER", repeat=4,
+            EN="EN_O",
+            GATE="GATE_O[0..3]",
+            OUT="OUT_O[0..3]",
+        ))
+
+        top = Circuit("top")
+        top.add(V("V_EN", "EN_T", "GND", dc=5))
+        top.add(outer.instance(
+            "U_OUT",
+            EN_O="EN_T",
+            GATE_O="GBUS[0..3]",
+            OUT_O="OBUS[0..3]",
+        ))
+        for k in range(4):
+            top.add(R(f"RL{k}", f"OBUS[{k}]", "GND", value="1k"))
+            top.add(V(f"V_G{k}", f"GBUS[{k}]", "GND", dc=0))
+        deck = top.to_spice_deck()
+
+        # The outer .SUBCKT block should contain 4 X-lines for U_INNER.
+        outer_block = deck[deck.index(".SUBCKT outer"):deck.index(".ENDS outer")]
+        for k in range(4):
+            assert f"XU_INNER{k} " in outer_block, (
+                f"outer .SUBCKT missing XU_INNER{k}:\n{outer_block}"
+            )
+
+
 class TestSpiceNameBoundaryCheck:
     def test_rejects_bad_ref_at_emit(self):
         c = Circuit("c")
