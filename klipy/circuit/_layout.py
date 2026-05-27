@@ -64,6 +64,19 @@ ORIGIN_Y = 12 * _GRID
 # returns past that.
 CROSSING_PASSES = 3
 
+# Maximum number of parts stacked vertically in a single Sugiyama layer
+# before that layer wraps into multiple sub-columns.  A4 landscape is
+# ~210mm tall; at SLOT_DY=15.24mm we fit roughly 13 parts comfortably
+# (leaving margins).  Above that we end up with parts running off the
+# bottom of the page and labels overlapping into neighbouring layers.
+# Wrapping at 8 leaves room for value-text overhang.
+MAX_LAYER_HEIGHT = 8
+
+# Horizontal spacing between sub-columns within a wrapped layer.  Smaller
+# than LAYER_DX so wrapped layer still reads as "one column-group" while
+# leaving room for value labels.
+SUBCOL_DX = 4 * _GRID            # 10.16 mm — half LAYER_DX
+
 
 def sugiyama_positions(c: "Circuit",
                        cluster_key: dict[str, int] | None = None,
@@ -256,23 +269,59 @@ def _reorder_by_neighbour_slot(nodes: list[str],
 # ──────────────────────────────────────────────────────────────────────────
 
 def _coord_assign(layered: list[list[str]]) -> dict[str, tuple[float, float]]:
-    """Map (layer index, slot index) -> (x_mm, y_mm).  Each layer is
-    vertically centred around ORIGIN_Y, so heights of adjacent layers
-    don't visually bias the rail placement."""
+    """Map (layer index, slot index) -> (x_mm, y_mm).
+
+    Layers taller than MAX_LAYER_HEIGHT wrap into multiple sub-columns
+    so a single Sugiyama layer doesn't run off an A4 sheet.  A 17-part
+    "all V sources" layer (common when a circuit has many independent
+    stub sources) without wrapping would stretch 250+ mm vertically;
+    wrapping at 8 keeps it inside the page and reduces label overlap
+    between adjacent layers.
+
+    Sub-columns within a wrapped layer get SUBCOL_DX horizontal
+    separation.  The next Sugiyama layer's x offset accumulates from
+    the wrapped layer's full width, so adjacent layers don't collide.
+
+    Layers are vertically centred around a common axis so adjacent
+    layer heights don't visually bias rail placement.
+    """
     out: dict[str, tuple[float, float]] = {}
     if not layered:
         return out
-    max_height = max(len(L) for L in layered)
+
+    # Per-layer effective height (post-wrap).
+    layer_heights = [
+        min(len(L), MAX_LAYER_HEIGHT) if L else 0
+        for L in layered
+    ]
+    max_height = max(layer_heights) if layer_heights else 0
     y_center = ORIGIN_Y + (max_height - 1) * SLOT_DY / 2
 
+    # Walk layers left-to-right, tracking the cumulative x cursor so
+    # wrapped (multi-sub-column) layers don't overlap the next layer.
+    x_cursor = ORIGIN_X
     for li, layer in enumerate(layered):
         n = len(layer)
-        y_top = y_center - (n - 1) * SLOT_DY / 2
+        if n == 0:
+            x_cursor += LAYER_DX
+            continue
+        sub_cols = (n + MAX_LAYER_HEIGHT - 1) // MAX_LAYER_HEIGHT
+        rows_per_sub = (n + sub_cols - 1) // sub_cols
+        y_top = y_center - (rows_per_sub - 1) * SLOT_DY / 2
         for si, ref in enumerate(layer):
+            sub = si // rows_per_sub
+            row = si % rows_per_sub
             out[ref] = (
-                ORIGIN_X + li * LAYER_DX,
-                y_top    + si * SLOT_DY,
+                x_cursor + sub * SUBCOL_DX,
+                y_top    + row * SLOT_DY,
             )
+        # Advance the cursor past this layer's full width.  A non-wrapped
+        # (sub_cols=1) layer advances by LAYER_DX; a wrapped layer
+        # advances by the sub-column span plus the inter-layer gap.
+        if sub_cols > 1:
+            x_cursor += (sub_cols - 1) * SUBCOL_DX + LAYER_DX
+        else:
+            x_cursor += LAYER_DX
     return out
 
 
