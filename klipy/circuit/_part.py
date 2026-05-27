@@ -645,9 +645,23 @@ class SubcircuitInstance(Part):
     definition: object = None                   # actually "Circuit"
     subckt: str = ""                            # definition's name
 
+    # Multi-channel marker.  1 (default) is a plain single instance.
+    # Values > 1 indicate this instance represents `repeat_count`
+    # parallel channels of the same sub-circuit; R5.3+ consumes this
+    # (Circuit.instance(repeat=N), bus port width validation, downstream
+    # schematic/SPICE expansion).
+    repeat_count: int = 1
+
+    # R5.4: stable KIIDs for the (repeat_count - 1) extra sheet-instance
+    # paths emitted by the C++ `add_sheet` binding when repeat_count > 1.
+    # Populated lazily by `_place_sheet_instances` on first emit and
+    # reused on subsequent re-emits so multi-call diffs are idempotent.
+    repeat_instances: list[str] = field(default_factory=list)
+
     def __init__(self, ref: str, definition, *,
                  port_map: dict[str, str],
-                 footprint: str = ""):
+                 footprint: str = "",
+                 repeat_count: int = 1):
         if not ref:
             raise ValueError("SubcircuitInstance: missing ref designator")
         if definition is None or not getattr(definition, "is_subcircuit", False):
@@ -658,6 +672,8 @@ class SubcircuitInstance(Part):
         super().__init__(ref=ref, value=definition.name, footprint=footprint)
         self.definition = definition
         self.subckt = definition.name
+        self.repeat_count = repeat_count
+        self.repeat_instances = []
         # Expand port_map against the definition's port_decl.
         from ._bus import expand_port_map, expand_port_decl
         expanded = expand_port_map(definition._port_decl, port_map)

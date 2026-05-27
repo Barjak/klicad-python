@@ -16,7 +16,7 @@ from klipy.circuit._bus import (
     parse_bus_member, parse_bus_range,
     expand_bus_range, expand_one,
     expand_port_decl, expand_port_map,
-    validate_port_decl, validate_spice_name,
+    validate_port_decl, validate_port_widths_for_repeat, validate_spice_name,
 )
 from klipy.circuit._part import SubcircuitInstance
 
@@ -139,6 +139,78 @@ class TestPortMapExpansion:
             expand_port_map(["DATA[0..3]"], {"DATA": "SCALAR"})
 
 
+class TestValidatePortWidthsForRepeat:
+    """R5.1: bus-port width must equal repeat_count; scalars are unrestricted."""
+
+    def test_all_scalar_any_repeat(self):
+        # Scalars are shared across slots — any repeat_count is valid.
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=1)
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=8)
+        validate_port_widths_for_repeat(["IN", "OUT", "EN"], repeat_count=60)
+
+    def test_bus_width_matches(self):
+        # DATA[0..7] has width 8; repeat=8 is valid.
+        validate_port_widths_for_repeat(["DATA[0..7]"], repeat_count=8)
+        # Descending range also has width 8.
+        validate_port_widths_for_repeat(["DATA[7..0]"], repeat_count=8)
+        # Width-1 bus (a single member span) with repeat=1.
+        validate_port_widths_for_repeat(["X[0..0]"], repeat_count=1)
+
+    def test_mixed_scalar_and_bus(self):
+        # Mixed ports — bus widths match, scalars unrestricted → OK.
+        validate_port_widths_for_repeat(
+            ["GATE", "OUT", "DATA[0..7]", "EN"],
+            repeat_count=8,
+        )
+
+    def test_multiple_buses_all_match(self):
+        validate_port_widths_for_repeat(
+            ["A[0..3]", "B[0..3]", "C[3..0]", "SHARED"],
+            repeat_count=4,
+        )
+
+    def test_bus_width_mismatch_raises(self):
+        # Bus too narrow.
+        with pytest.raises(ValueError, match="bus width 4 doesn't match repeat_count 8"):
+            validate_port_widths_for_repeat(["DATA[0..3]"], repeat_count=8)
+        # Bus too wide.
+        with pytest.raises(ValueError, match="bus width 16 doesn't match repeat_count 8"):
+            validate_port_widths_for_repeat(["DATA[0..15]"], repeat_count=8)
+
+    def test_one_bus_matches_one_mismatches(self):
+        # First bus matches, second doesn't — must still raise.
+        with pytest.raises(ValueError, match=r"'B\[0\.\.3\]'.*bus width 4"):
+            validate_port_widths_for_repeat(
+                ["A[0..7]", "B[0..3]"],
+                repeat_count=8,
+            )
+
+    def test_reject_non_positive_repeat(self):
+        with pytest.raises(ValueError, match="repeat_count must be >= 1"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=0)
+        with pytest.raises(ValueError, match="repeat_count must be >= 1"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=-1)
+
+    def test_reject_non_int_repeat(self):
+        with pytest.raises(ValueError, match="repeat_count must be an int"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=8.0)  # type: ignore[arg-type]
+        # bool is technically an int subclass — explicitly rejected.
+        with pytest.raises(ValueError, match="repeat_count must be an int"):
+            validate_port_widths_for_repeat(["IN"], repeat_count=True)  # type: ignore[arg-type]
+
+    def test_propagates_port_decl_errors(self):
+        # Malformed port_decl is caught by the underlying validate_port_decl.
+        with pytest.raises(ValueError, match="power"):
+            validate_port_widths_for_repeat(["IN", "GND"], repeat_count=1)
+        with pytest.raises(ValueError, match="(duplicate|used twice)"):
+            validate_port_widths_for_repeat(["IN", "IN"], repeat_count=1)
+
+    def test_isolated_bus_member_is_scalar_like(self):
+        # An isolated DATA[3] (not a range) is treated as a scalar port —
+        # it doesn't span a width, so any repeat_count is OK.
+        validate_port_widths_for_repeat(["DATA[3]", "IN"], repeat_count=8)
+
+
 class TestSpiceNameValidation:
     def test_simple_refs(self):
         validate_spice_name("R1", kind="ref")
@@ -228,6 +300,82 @@ class TestSubcircuitDSL:
         )
         assert inst.connections["DATA[2]"] == "BUS[2]"
         assert inst.spice_line() == "XU1 K BUS[0] BUS[1] BUS[2] BUS[3] sc"
+
+    def test_repeat_count_field(self):
+        """R5.2: SubcircuitInstance carries a repeat_count int (default 1)."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+
+        # Default — no kwarg, repeat_count is 1.
+        inst_default = SubcircuitInstance(
+            "U_amp1", amp, port_map={"IN": "A", "OUT": "B"},
+        )
+        assert inst_default.repeat_count == 1
+
+        # Explicit — kwarg sets the field.
+        inst_multi = SubcircuitInstance(
+            "U_amp2", amp, port_map={"IN": "A", "OUT": "B"},
+            repeat_count=4,
+        )
+        assert inst_multi.repeat_count == 4
+
+    # ── R5.3: Circuit.instance(repeat=N, ...) ────────────────────────────
+
+    def test_instance_repeat_default(self):
+        """repeat=1 (default) behaves exactly like pre-R5.3."""
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        sub.add(R("R1", "IN", "OUT"))
+        inst = sub.instance("U1", IN="A", OUT="B")
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 1
+        # Behaviour unchanged: pin_names / connections / spice_line.
+        assert inst.pin_names == ("IN", "OUT")
+        assert inst.connections == {"IN": "A", "OUT": "B"}
+        assert inst.spice_line() == "XU1 A B amp"
+
+    def test_instance_repeat_n(self):
+        """repeat=4 emits one SubcircuitInstance with repeat_count=4."""
+        sub = Circuit(
+            "ch",
+            ports=["GATE[0..3]", "OUT[0..3]", "DATA[0..3]"],  # all bus, width 4
+        )
+        sub.add(R("R1", "GATE[0]", "OUT[0]"))
+        inst = sub.instance(
+            "U_CH",
+            repeat=4,
+            GATE="GATE_BUS[0..3]",
+            OUT="OUT_BUS[0..3]",
+            DATA="DATA_BUS[0..3]",
+        )
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 4
+        # Underlying port expansion is unchanged — repeat is a marker,
+        # downstream emitters (R5.4/R5.5) consume it.
+        assert inst.connections["GATE[2]"] == "GATE_BUS[2]"
+        assert inst.connections["DATA[0]"] == "DATA_BUS[0]"
+
+    def test_instance_repeat_scalar_and_bus_mix(self):
+        """Scalars are shared across slots; bus ports must match repeat."""
+        sub = Circuit("ch", ports=["EN", "DATA[0..3]"])  # EN scalar, DATA width 4
+        sub.add(R("R1", "EN", "DATA[0]"))
+        inst = sub.instance(
+            "U_CH", repeat=4, EN="EN_TOP", DATA="DATA_BUS[0..3]",
+        )
+        assert inst.repeat_count == 4
+        assert inst.connections["EN"] == "EN_TOP"
+        assert inst.connections["DATA[3]"] == "DATA_BUS[3]"
+
+    def test_instance_repeat_bus_width_mismatch_raises(self):
+        """A bus port whose width != repeat raises (per R5.1's validator)."""
+        sub = Circuit("ch", ports=["DATA[0..2]"])  # width 3
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U_CH", repeat=4, DATA="DATA_BUS[0..2]")
+
+    def test_instance_repeat_rejects_non_positive(self):
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=0, IN="A", OUT="B")
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=-2, IN="A", OUT="B")
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -335,6 +483,118 @@ class TestSubcktEmission:
         assert ".include /tmp/vendor_amp.lib" in deck
 
 
+class TestSpiceRepeatExpansion:
+    """R5.5: SPICE deck emits N X-lines for SubcircuitInstance(repeat=N)."""
+
+    def _ch(self) -> Circuit:
+        # 4-channel sub-circuit with one bus port and one scalar port.
+        # Body references a single bus member (GATE[0]) — after R5.5
+        # expansion, each slot's X-line wires every GATE[i] position to
+        # bit-K of the external bus, so the body's GATE[0] resolves to
+        # the per-channel scalar.
+        ch = Circuit("ch", ports=["EN", "GATE[0..3]", "OUT[0..3]"])
+        ch.add(R("R1", "GATE[0]", "OUT[0]", value="10k"))
+        return ch
+
+    def _top_repeat4(self) -> Circuit:
+        ch = self._ch()
+        top = Circuit("top")
+        top.add(V("V_EN", "EN_TOP", "GND", dc=5))
+        top.add(ch.instance(
+            "U_CH", repeat=4,
+            EN="EN_TOP",
+            GATE="GATE_BUS[0..3]",
+            OUT="OUT_BUS[0..3]",
+        ))
+        # Pull-down each OUT bit so root validation sees them referenced.
+        for k in range(4):
+            top.add(R(f"RL{k}", f"OUT_BUS[{k}]", "GND", value="1k"))
+        # Drive each GATE bit so root validation sees them referenced.
+        for k in range(4):
+            top.add(V(f"V_G{k}", f"GATE_BUS[{k}]", "GND", dc=0))
+        return top
+
+    def test_emits_n_x_lines(self):
+        deck = self._top_repeat4().to_spice_deck()
+        # Four X-lines with refs ending 0/1/2/3.
+        for k in range(4):
+            assert f"XU_CH{k} " in deck, f"missing XU_CH{k} in deck:\n{deck}"
+        # And NO bare "XU_CH " (the unsuffixed form).
+        assert "XU_CH " not in deck
+
+    def test_each_x_line_uses_bit_k_bus_net(self):
+        deck = self._top_repeat4().to_spice_deck()
+        # Slot K's X-line must contain GATE_BUS[K] and OUT_BUS[K] (and the
+        # scalar EN_TOP).  Pull out each X-line and check.
+        for k in range(4):
+            line = next(
+                ln for ln in deck.splitlines()
+                if ln.startswith(f"XU_CH{k} ")
+            )
+            assert "EN_TOP" in line, line
+            # The bus-bit-K nets are present...
+            assert f"GATE_BUS[{k}]" in line, line
+            assert f"OUT_BUS[{k}]" in line, line
+            # ...and no other bus bits leak into this slot's X-line.
+            for other in range(4):
+                if other == k:
+                    continue
+                assert f"GATE_BUS[{other}]" not in line, (
+                    f"slot {k} should not see GATE_BUS[{other}]: {line}"
+                )
+                assert f"OUT_BUS[{other}]" not in line, (
+                    f"slot {k} should not see OUT_BUS[{other}]: {line}"
+                )
+
+    def test_repeat_1_unchanged(self):
+        """repeat=1 (default) still emits a single X-line — unchanged."""
+        amp = Circuit("amp", ports=["IN", "OUT"])
+        amp.add(R("R1", "IN", "OUT", value="10k"))
+        top = Circuit("top")
+        top.add(V("V1", "A", "GND", dc=1))
+        top.add(amp.instance("U1", IN="A", OUT="B"))
+        top.add(R("RL", "B", "GND", value="1k"))
+        deck = top.to_spice_deck()
+        # Single X-line, no suffix-numbered variants.
+        assert "XU1 A B amp" in deck
+        assert "XU10" not in deck
+        assert "XU11" not in deck
+
+    def test_repeat_in_nested_subckt_body(self):
+        """A repeat=N instance inside another Sub-Circuit's body expands
+        to N X-lines inside that .SUBCKT block."""
+        inner = self._ch()
+
+        # Wrap the repeat instance inside an outer Sub-Circuit.
+        outer = Circuit("outer", ports=["EN_O", "GATE_O[0..3]", "OUT_O[0..3]"])
+        outer.add(inner.instance(
+            "U_INNER", repeat=4,
+            EN="EN_O",
+            GATE="GATE_O[0..3]",
+            OUT="OUT_O[0..3]",
+        ))
+
+        top = Circuit("top")
+        top.add(V("V_EN", "EN_T", "GND", dc=5))
+        top.add(outer.instance(
+            "U_OUT",
+            EN_O="EN_T",
+            GATE_O="GBUS[0..3]",
+            OUT_O="OBUS[0..3]",
+        ))
+        for k in range(4):
+            top.add(R(f"RL{k}", f"OBUS[{k}]", "GND", value="1k"))
+            top.add(V(f"V_G{k}", f"GBUS[{k}]", "GND", dc=0))
+        deck = top.to_spice_deck()
+
+        # The outer .SUBCKT block should contain 4 X-lines for U_INNER.
+        outer_block = deck[deck.index(".SUBCKT outer"):deck.index(".ENDS outer")]
+        for k in range(4):
+            assert f"XU_INNER{k} " in outer_block, (
+                f"outer .SUBCKT missing XU_INNER{k}:\n{outer_block}"
+            )
+
+
 class TestSpiceNameBoundaryCheck:
     def test_rejects_bad_ref_at_emit(self):
         c = Circuit("c")
@@ -409,3 +669,128 @@ class TestSubcircuitNgspice:
         assert "xub.n1" in result
         # Different stimulus → different internal node values
         assert result["xua.n1"][-1] != result["xub.n1"][-1]
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# R5.4: _place_sheet_instances emits add_sheet with repeat kwargs
+# ──────────────────────────────────────────────────────────────────────────
+
+class _FakeRunPythonResult:
+    """Minimal stand-in for klipy.klicad.RunPythonResult."""
+    def __init__(self, result_repr: str):
+        self.ok = True
+        self.stdout = ""
+        self.stderr = ""
+        self.result_repr = result_repr
+        self.exception_traceback = ""
+
+
+class _FakeKiCad:
+    """Captures every run_python() snippet emitted by callers.
+
+    Returns a fixed kiid literal so callers that ast.literal_eval the
+    result get a non-empty string back.
+    """
+    def __init__(self, kiid: str = "fake-sheet-kiid"):
+        self.snippets: list[str] = []
+        self._kiid = kiid
+
+    def run_python(self, code: str) -> _FakeRunPythonResult:
+        self.snippets.append(code)
+        return _FakeRunPythonResult(repr(self._kiid))
+
+
+class TestPlaceSheetInstancesRepeatEmit:
+    """R5.4: _place_sheet_instances passes repeat_count + repeat_instances."""
+
+    def _make_top(self, repeat: int) -> "Circuit":
+        ch = Circuit(
+            "ch",
+            ports=["EN", "GATE[0..3]", "OUT[0..3]"],
+        )
+        ch.add(R("R1", "GATE[0]", "OUT[0]", value="10k"))
+        top = Circuit("top")
+        kwargs = dict(EN="EN_TOP",
+                      GATE="GATE_BUS[0..3]",
+                      OUT="OUT_BUS[0..3]")
+        if repeat > 1:
+            top.add(ch.instance("U_CH", repeat=repeat, **kwargs))
+        else:
+            top.add(ch.instance("U_CH", **kwargs))
+        return top
+
+    def _run_place(self, top, sub_filename: str = "ch.kicad_sch"):
+        from klipy.circuit._klicad_sch import _place_sheet_instances
+        from pathlib import Path
+        # The function indexes sub_to_filename by id(definition).  Pull
+        # the definition off the single SUBCIRCUIT part.
+        sub_parts = [p for p in top.parts if p.kind == "SUBCIRCUIT"]
+        assert len(sub_parts) == 1
+        inst = sub_parts[0]
+        sub_to_filename = {id(inst.definition): Path(sub_filename)}
+        positions = {inst.ref: (50.0, 60.0)}
+        kicad = _FakeKiCad()
+        placed = _place_sheet_instances(
+            top, kicad, sub_to_filename, positions, skip_refs={},
+        )
+        return inst, kicad, placed
+
+    def test_repeat_one_omits_kwargs(self):
+        """repeat_count == 1 → no repeat_count / repeat_instances kwargs."""
+        top = self._make_top(repeat=1)
+        inst, kicad, _placed = self._run_place(top)
+        assert inst.repeat_count == 1
+        assert inst.repeat_instances == []
+        # Find the add_sheet snippet — should be exactly one.
+        sheet_snips = [s for s in kicad.snippets if "ss.add_sheet(" in s]
+        assert len(sheet_snips) == 1
+        snip = sheet_snips[0]
+        assert "repeat_count=" not in snip
+        assert "repeat_instances=" not in snip
+
+    def test_repeat_n_emits_kwargs(self):
+        """repeat_count == 4 → repeat_count=4, repeat_instances of length 3."""
+        top = self._make_top(repeat=4)
+        inst, kicad, _placed = self._run_place(top)
+        assert inst.repeat_count == 4
+        # Field populated lazily with N-1 stable KIIDs.
+        assert len(inst.repeat_instances) == 3
+        for k in inst.repeat_instances:
+            assert isinstance(k, str) and len(k) > 0
+        # Snippet contains the new kwargs.
+        sheet_snips = [s for s in kicad.snippets if "ss.add_sheet(" in s]
+        assert len(sheet_snips) == 1
+        snip = sheet_snips[0]
+        assert "repeat_count=4" in snip
+        assert "repeat_instances=" in snip
+        for k in inst.repeat_instances:
+            assert k in snip
+
+    def test_repeat_instances_stable_across_reemits(self):
+        """Re-running emit reuses the same N-1 KIIDs (idempotent)."""
+        top = self._make_top(repeat=4)
+        inst, kicad1, _ = self._run_place(top)
+        first_kiids = list(inst.repeat_instances)
+        assert len(first_kiids) == 3
+        # Re-emit on the SAME top circuit (same inst object).
+        _, kicad2, _ = self._run_place(top)
+        assert inst.repeat_instances == first_kiids
+        # Both emitted snippets must reference the identical KIIDs.
+        snip1 = [s for s in kicad1.snippets if "ss.add_sheet(" in s][0]
+        snip2 = [s for s in kicad2.snippets if "ss.add_sheet(" in s][0]
+        for k in first_kiids:
+            assert k in snip1
+            assert k in snip2
+
+    def test_preseeded_repeat_instances_respected(self):
+        """If repeat_instances is pre-populated, emit reuses it verbatim."""
+        top = self._make_top(repeat=4)
+        sub_parts = [p for p in top.parts if p.kind == "SUBCIRCUIT"]
+        inst = sub_parts[0]
+        preset = ["aaa-1", "bbb-2", "ccc-3"]
+        inst.repeat_instances = list(preset)
+        _, kicad, _ = self._run_place(top)
+        assert inst.repeat_instances == preset
+        snip = [s for s in kicad.snippets if "ss.add_sheet(" in s][0]
+        for k in preset:
+            assert k in snip

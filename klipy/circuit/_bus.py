@@ -318,3 +318,69 @@ def validate_spice_name(name: str, *, kind: str) -> None:
             f"ref designator {name!r} must start with a letter (SPICE "
             f"reads the first character as the element-type letter)"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Multi-channel: bus-port width validation for `repeat=N` instances
+# ──────────────────────────────────────────────────────────────────────────
+
+def validate_port_widths_for_repeat(
+    port_decl: Sequence[str],
+    repeat_count: int,
+) -> None:
+    """Validate that every bus port in ``port_decl`` has width == repeat_count.
+
+    Used by the multi-channel DSL: when a SubcircuitInstance is constructed
+    with ``repeat=N``, the underlying Sub-Circuit definition's bus ports must
+    each span exactly N members so that bit ``i`` of the bus binds to slot
+    ``i``'s instance.  Scalar ports are unrestricted — they're shared across
+    every slot.
+
+    Decision (per multi-channel plan): mismatch is a hard error, not a
+    silent truncation/extension.  Width must match exactly.
+
+    Parameters
+    ----------
+    port_decl
+        The Sub-Circuit's declared port list, in the same form accepted by
+        ``validate_port_decl`` / ``expand_port_decl`` (scalars and bus
+        ranges like ``"DATA[0..7]"`` intermixed).
+    repeat_count
+        The instance's ``repeat=N`` value; must be a positive integer.
+
+    Raises
+    ------
+    ValueError
+        - If ``repeat_count`` is not a positive integer.
+        - If any bus port's width != ``repeat_count``.
+        - If ``port_decl`` itself is malformed (delegated via
+          ``validate_port_decl``).
+    """
+    if not isinstance(repeat_count, int) or isinstance(repeat_count, bool):
+        raise ValueError(
+            f"repeat_count must be an int; got {type(repeat_count).__name__}"
+        )
+    if repeat_count < 1:
+        raise ValueError(
+            f"repeat_count must be >= 1; got {repeat_count}"
+        )
+
+    # Reuse the existing port-decl validator so malformed inputs are caught
+    # with the same error vocabulary used elsewhere.
+    validate_port_decl(port_decl)
+
+    for p in port_decl:
+        if is_bus_range(p):
+            base, low, high = parse_bus_range(p)  # type: ignore[misc]
+            width = high - low + 1
+            if width != repeat_count:
+                raise ValueError(
+                    f"port {p!r}: bus width {width} doesn't match "
+                    f"repeat_count {repeat_count} (every bus port must "
+                    f"span exactly repeat_count members so bit i binds "
+                    f"to slot i)"
+                )
+        # Scalar ports and isolated bus members are unrestricted — scalars
+        # are shared across slots; a lone explicit member like `DATA[3]`
+        # in a port list is unusual but legal and treated as a scalar
+        # for repeat purposes.
