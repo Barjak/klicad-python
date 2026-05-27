@@ -318,6 +318,65 @@ class TestSubcircuitDSL:
         )
         assert inst_multi.repeat_count == 4
 
+    # ── R5.3: Circuit.instance(repeat=N, ...) ────────────────────────────
+
+    def test_instance_repeat_default(self):
+        """repeat=1 (default) behaves exactly like pre-R5.3."""
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        sub.add(R("R1", "IN", "OUT"))
+        inst = sub.instance("U1", IN="A", OUT="B")
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 1
+        # Behaviour unchanged: pin_names / connections / spice_line.
+        assert inst.pin_names == ("IN", "OUT")
+        assert inst.connections == {"IN": "A", "OUT": "B"}
+        assert inst.spice_line() == "XU1 A B amp"
+
+    def test_instance_repeat_n(self):
+        """repeat=4 emits one SubcircuitInstance with repeat_count=4."""
+        sub = Circuit(
+            "ch",
+            ports=["GATE[0..3]", "OUT[0..3]", "DATA[0..3]"],  # all bus, width 4
+        )
+        sub.add(R("R1", "GATE[0]", "OUT[0]"))
+        inst = sub.instance(
+            "U_CH",
+            repeat=4,
+            GATE="GATE_BUS[0..3]",
+            OUT="OUT_BUS[0..3]",
+            DATA="DATA_BUS[0..3]",
+        )
+        assert isinstance(inst, SubcircuitInstance)
+        assert inst.repeat_count == 4
+        # Underlying port expansion is unchanged — repeat is a marker,
+        # downstream emitters (R5.4/R5.5) consume it.
+        assert inst.connections["GATE[2]"] == "GATE_BUS[2]"
+        assert inst.connections["DATA[0]"] == "DATA_BUS[0]"
+
+    def test_instance_repeat_scalar_and_bus_mix(self):
+        """Scalars are shared across slots; bus ports must match repeat."""
+        sub = Circuit("ch", ports=["EN", "DATA[0..3]"])  # EN scalar, DATA width 4
+        sub.add(R("R1", "EN", "DATA[0]"))
+        inst = sub.instance(
+            "U_CH", repeat=4, EN="EN_TOP", DATA="DATA_BUS[0..3]",
+        )
+        assert inst.repeat_count == 4
+        assert inst.connections["EN"] == "EN_TOP"
+        assert inst.connections["DATA[3]"] == "DATA_BUS[3]"
+
+    def test_instance_repeat_bus_width_mismatch_raises(self):
+        """A bus port whose width != repeat raises (per R5.1's validator)."""
+        sub = Circuit("ch", ports=["DATA[0..2]"])  # width 3
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U_CH", repeat=4, DATA="DATA_BUS[0..2]")
+
+    def test_instance_repeat_rejects_non_positive(self):
+        sub = Circuit("amp", ports=["IN", "OUT"])
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=0, IN="A", OUT="B")
+        with pytest.raises(ValueError, match="repeat_count"):
+            sub.instance("U1", repeat=-2, IN="A", OUT="B")
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Recursive .SUBCKT emission
