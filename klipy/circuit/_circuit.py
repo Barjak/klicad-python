@@ -568,3 +568,15 @@ class Circuit:
         """
         from ._klicad_sch import to_klicad_sch
         return to_klicad_sch(self, path, kicad=kicad, route=route)
+
+    def to_netlist(self, schematic_dir: str | None = None) -> str:
+        """Emit this circuit's KiCad netlist.
+
+        Delegates to the existing kicad-cli wrapper in
+        klipy.circuit._netlist.  For multi-channel SubcircuitInstances
+        (repeat_count > 1), KliCAD's C++ netlist exporter handles the
+        fan-out automatically via the synthetic-clone hierarchy that
+        R2 + R5.4 produce.
+        """
+        from ._netlist import to_netlist as _to_netlist
+        return _to_netlist(self, schematic_dir=schematic_dir)
