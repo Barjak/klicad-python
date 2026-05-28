@@ -660,7 +660,7 @@ def test_oscillator_actually_oscillates(kicad):
     deck = c.to_spice_deck()
 
     r = kicad.run_python(f"""
-import kicad_native_simulator as sim
+import klicad_native_simulator as sim
 sim.load_netlist({deck!r})
 sim.command('run')
 # Use the most-recent tran plot — previous test runs in the same KliCAD

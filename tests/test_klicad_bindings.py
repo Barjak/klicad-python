@@ -35,7 +35,7 @@ from conftest import (
 def test_drc_on_switch_board(kicad, tmp_path):
     """DRC on switch.kicad_pcb returns a structured report dict."""
     r = kicad.run_python(
-        "import kicad_native_drc as d\n"
+        "import klicad_native_drc as d\n"
         f"d.run({str(SWITCH_PCB)!r}, units='mm', severity='warning')"
     )
     assert_run_python_ok(r)
@@ -47,7 +47,7 @@ def test_drc_on_switch_board(kicad, tmp_path):
 def test_erc_on_switch_schematic(kicad):
     """ERC on switch.kicad_sch returns a structured report dict."""
     r = kicad.run_python(
-        "import kicad_native_erc as e\n"
+        "import klicad_native_erc as e\n"
         f"e.run({str(SWITCH_SCH)!r}, units='mm', severity='warning')"
     )
     assert_run_python_ok(r)
@@ -63,7 +63,7 @@ def test_export_gerbers(kicad, tmp_path):
     out_dir = tmp_path / "gerbers"
     out_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_export_gerbers as g\n"
+        "import klicad_native_export_gerbers as g\n"
         f"g.run({str(SWITCH_PCB)!r}, output_dir={str(out_dir) + '/'!r})"
     )
     assert_run_python_ok(r)
@@ -78,7 +78,7 @@ def test_export_drill(kicad, tmp_path):
     out_dir = tmp_path / "drill"
     out_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_export_drill as d\n"
+        "import klicad_native_export_drill as d\n"
         f"d.run({str(SWITCH_PCB)!r}, output_dir={str(out_dir) + '/'!r},"
         f" format='excellon', generate_map=True, map_format='pdf')"
     )
@@ -95,7 +95,7 @@ def test_export_3d_step(kicad, tmp_path):
     """STEP export produces a .step file."""
     out = tmp_path / "switch.step"
     r = kicad.run_python(
-        "import kicad_native_export_3d as t\n"
+        "import klicad_native_export_3d as t\n"
         f"t.run({str(SWITCH_PCB)!r}, output={str(out)!r}, format='step', overwrite=True)"
     )
     assert_run_python_ok(r)
@@ -108,7 +108,7 @@ def test_render_png(kicad, tmp_path):
     """Render produces a PNG image."""
     out = tmp_path / "render.png"
     r = kicad.run_python(
-        "import kicad_native_render as rn\n"
+        "import klicad_native_render as rn\n"
         f"rn.run({str(SWITCH_PCB)!r}, output={str(out)!r},"
         f" format='png', side='top', width=400, height=300, quality='basic')"
     )
@@ -124,7 +124,7 @@ def test_export_sch_pdf(kicad, tmp_path):
     """Schematic-plot to PDF produces a .pdf."""
     out = tmp_path / "sch.pdf"
     r = kicad.run_python(
-        "import kicad_native_export_sch_plot as sp\n"
+        "import klicad_native_export_sch_plot as sp\n"
         f"sp.run({str(SWITCH_SCH)!r}, output={str(out)!r}, format='pdf')"
     )
     assert_run_python_ok(r)
@@ -137,7 +137,7 @@ def test_export_sch_netlist(kicad, tmp_path):
     """Schematic netlist export (KliCAD sexpr) produces a .net file."""
     out = tmp_path / "switch.net"
     r = kicad.run_python(
-        "import kicad_native_export_sch_netlist as n\n"
+        "import klicad_native_export_sch_netlist as n\n"
         f"n.run({str(SWITCH_SCH)!r}, output={str(out)!r}, format='kicad')"
     )
     assert_run_python_ok(r)
@@ -150,7 +150,7 @@ def test_export_sch_bom(kicad, tmp_path):
     """BOM CSV export."""
     out = tmp_path / "bom.csv"
     r = kicad.run_python(
-        "import kicad_native_export_sch_bom as b\n"
+        "import klicad_native_export_sch_bom as b\n"
         f"b.run({str(SWITCH_SCH)!r}, output={str(out)!r},"
         " fields_ordered=['Reference','Value','Footprint','${QUANTITY}'],"
         " field_delimiter=',', string_delimiter='\"')"
@@ -174,7 +174,7 @@ def test_pcb_upgrade_on_loaded_board(kicad):
     has a real BOARD::GetFileName() before the upgrade runs."""
     target = str(SWITCH_PCB)
     r = kicad.run_python(
-        "import kicad_native_pcb_upgrade as u\n"
+        "import klicad_native_pcb_upgrade as u\n"
         f"u.run({target!r}, force=True)"
     )
     assert_run_python_ok(r)
@@ -193,7 +193,7 @@ def test_pcb_upgrade_on_unrelated_copy(kicad, switch_project_copy):
     target."""
     target = switch_project_copy / "switch.kicad_pcb"
     r = kicad.run_python(
-        "import kicad_native_pcb_upgrade as u\n"
+        "import klicad_native_pcb_upgrade as u\n"
         f"u.run({str(target)!r}, force=True)"
     )
     assert_run_python_ok(r)
@@ -206,7 +206,7 @@ def test_sch_upgrade_on_copy(kicad, switch_project_copy):
     target = switch_project_copy / "switch.kicad_sch"
     before_mtime = target.stat().st_mtime
     r = kicad.run_python(
-        "import kicad_native_sch_upgrade as u\n"
+        "import klicad_native_sch_upgrade as u\n"
         f"u.run({str(target)!r}, force=True)"
     )
     assert_run_python_ok(r)
@@ -220,7 +220,7 @@ def test_fp_upgrade_on_copy(kicad, demo_fp_lib, tmp_path):
     dst = tmp_path / demo_fp_lib.name
     shutil.copytree(demo_fp_lib, dst)
     r = kicad.run_python(
-        "import kicad_native_fp_upgrade as u\n"
+        "import klicad_native_fp_upgrade as u\n"
         f"u.run({str(dst)!r}, force=True)"
     )
     assert_run_python_ok(r)
@@ -233,7 +233,7 @@ def test_sym_upgrade_on_copy(kicad, demo_sym_lib, tmp_path):
     dst = tmp_path / demo_sym_lib.name
     shutil.copy(demo_sym_lib, dst)
     r = kicad.run_python(
-        "import kicad_native_sym_upgrade as u\n"
+        "import klicad_native_sym_upgrade as u\n"
         f"u.run({str(dst)!r}, force=True)"
     )
     assert_run_python_ok(r)
@@ -248,7 +248,7 @@ def test_sym_export_svg(kicad, demo_sym_lib, tmp_path):
     out_dir = tmp_path / "svgs"
     out_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_sym_export_svg as s\n"
+        "import klicad_native_sym_export_svg as s\n"
         f"s.run({str(demo_sym_lib)!r}, output_dir={str(out_dir) + '/'!r})"
     )
     assert_run_python_ok(r)
@@ -275,7 +275,7 @@ def test_fp_export_svg_no_crash(kicad, demo_fp_lib, tmp_path):
     out_dir = tmp_path / "svgs"
     out_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_fp_export_svg as f\n"
+        "import klicad_native_fp_export_svg as f\n"
         f"f.run({str(demo_fp_lib)!r}, output_dir={str(out_dir) + '/'!r})"
     )
     assert_run_python_ok(r)
@@ -289,7 +289,7 @@ def test_fp_export_svg_no_crash(kicad, demo_fp_lib, tmp_path):
 def test_jobset_module_loaded(kicad):
     """The jobset binding module loads and exposes load() + run()."""
     r = kicad.run_python(
-        "import kicad_native_jobset as js\n"
+        "import klicad_native_jobset as js\n"
         "sorted(a for a in dir(js) if not a.startswith('_'))"
     )
     assert_run_python_ok(r)
@@ -302,7 +302,7 @@ def test_jobset_load_minimal_fixture(kicad):
     fixture = Path(__file__).parent / "fixtures" / "minimal.kicad_jobset"
     assert fixture.is_file(), f"missing fixture: {fixture}"
     r = kicad.run_python(
-        f"import kicad_native_jobset as js\n"
+        f"import klicad_native_jobset as js\n"
         f"info = js.load({str(fixture)!r})\n"
         f"(info['ok'], len(info['jobs']), len(info['destinations']))"
     )
@@ -319,7 +319,7 @@ def test_jobset_load_minimal_fixture(kicad):
 def test_gerber_diff_module(kicad):
     """gerber-diff binding loads without instantiating a diff."""
     r = kicad.run_python(
-        "import kicad_native_gerber_diff as gd; hasattr(gd, 'run')"
+        "import klicad_native_gerber_diff as gd; hasattr(gd, 'run')"
     )
     assert_run_python_ok(r)
     assert r.result_repr == "True"
@@ -335,7 +335,7 @@ def test_gerber_info_on_exported_gerber(kicad, tmp_path):
     gerber_dir = tmp_path / "gerbers"
     gerber_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_export_gerbers as g\n"
+        "import klicad_native_export_gerbers as g\n"
         f"g.run({str(SWITCH_PCB)!r}, output_dir={str(gerber_dir) + '/'!r})"
     )
     assert_run_python_ok(r)
@@ -344,7 +344,7 @@ def test_gerber_info_on_exported_gerber(kicad, tmp_path):
     assert f_cu is not None, f"no F_Cu gerber in {list(gerber_dir.iterdir())}"
 
     r = kicad.run_python(
-        "import kicad_native_gerber_info as gi\n"
+        "import klicad_native_gerber_info as gi\n"
         f"gi.run({str(f_cu)!r}, output_format='json', units='mm', calculate_area=True)"
     )
     assert_run_python_ok(r)
@@ -365,7 +365,7 @@ def test_gerber_export_png(kicad, tmp_path):
     gerber_dir = tmp_path / "gerbers"
     gerber_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_export_gerbers as g\n"
+        "import klicad_native_export_gerbers as g\n"
         f"g.run({str(SWITCH_PCB)!r}, output_dir={str(gerber_dir) + '/'!r})"
     )
     assert_run_python_ok(r)
@@ -381,7 +381,7 @@ def test_gerber_export_png(kicad, tmp_path):
     out_dir = tmp_path / "pngs"
     out_dir.mkdir()
     r = kicad.run_python(
-        "import kicad_native_gerber_export_png as gp\n"
+        "import klicad_native_gerber_export_png as gp\n"
         f"gp.run(gerber_paths=[{str(largest)!r}], output_dir={str(out_dir) + '/'!r}, dpi=150)"
     )
     assert_run_python_ok(r)  # the binding itself didn't crash / raise
@@ -399,7 +399,7 @@ def test_gerber_export_png(kicad, tmp_path):
 def test_pcb_import_module(kicad):
     """pcb_import binding loads and exposes run()."""
     r = kicad.run_python(
-        "import kicad_native_pcb_import as pi; hasattr(pi, 'run')"
+        "import klicad_native_pcb_import as pi; hasattr(pi, 'run')"
     )
     assert_run_python_ok(r)
     assert r.result_repr == "True"
@@ -411,7 +411,7 @@ def test_pcb_import_module(kicad):
 def test_gui_list_frame_names(kicad):
     """The GUI binding enumerates accepted frame names."""
     r = kicad.run_python(
-        "import kicad_native_gui as g; sorted(g.list_frame_names())"
+        "import klicad_native_gui as g; sorted(g.list_frame_names())"
     )
     assert_run_python_ok(r)
     # Sanity: a handful of expected names are present
@@ -431,7 +431,7 @@ def auto_dismiss_dialogs(kicad):
     # the suite.  Uses our own binding, no AppleScript.
     try:
         kicad.run_python(
-            "import kicad_native_gui as g; g.dismiss_dialogs()"
+            "import klicad_native_gui as g; g.dismiss_dialogs()"
         )
     except Exception:
         pass
@@ -460,7 +460,7 @@ def test_gui_show_frame(kicad, auto_dismiss_dialogs, frame_name):
     dismisses any leftover dialog so the next test starts clean.
     """
     r = kicad.run_python(
-        "import kicad_native_gui as g\n"
+        "import klicad_native_gui as g\n"
         f"result = g.show_frame({frame_name!r})\n"
         "result"
     )
@@ -480,29 +480,29 @@ def test_gui_show_3d_viewer_returns_redirect(kicad, auto_dismiss_dialogs):
     FRAME_PCB_DISPLAY3D — the viewer is spawned as a child of
     PCB_EDIT_FRAME via PCB_BASE_FRAME::CreateAndShow3D_Frame, which
     can't be reached from libkicommon.  show_frame returns a clear
-    redirect pointing users at kicad_native_3d_viewer (which lives in
+    redirect pointing users at klicad_native_3d_viewer (which lives in
     pcbnew kiface and uses the correct spawn path).
     """
     r = kicad.run_python(
-        "import kicad_native_gui as g\n"
+        "import klicad_native_gui as g\n"
         "g.show_frame('3d_viewer')"
     )
     assert_run_python_ok(r)
     assert "'ok': False" in r.result_repr, r.result_repr
-    assert "kicad_native_3d_viewer" in r.result_repr, r.result_repr
+    assert "klicad_native_3d_viewer" in r.result_repr, r.result_repr
     assert_kicad_alive(kicad)
 
 
 def test_3d_viewer_auto_spawns(kicad, auto_dismiss_dialogs):
-    """kicad_native_3d_viewer auto-spawns the viewer via the correct path.
+    """klicad_native_3d_viewer auto-spawns the viewer via the correct path.
 
     Any call into the binding triggers require_3d_viewer_frame, which
     finds the PCB editor and calls CreateAndShow3D_Frame on it.
     """
     r = kicad.run_python(
-        "import kicad_native_gui as g\n"
+        "import klicad_native_gui as g\n"
         "g.show_frame('pcb_editor')\n"
-        "import kicad_native_3d_viewer as v\n"
+        "import klicad_native_3d_viewer as v\n"
         "v.is_open()"
     )
     assert_run_python_ok(r)
@@ -510,7 +510,7 @@ def test_3d_viewer_auto_spawns(kicad, auto_dismiss_dialogs):
     # find_3d_viewer_frame's wxTopLevelWindows walk yet); the second
     # call after a real method below proves the spawn.
     r = kicad.run_python(
-        "import kicad_native_3d_viewer as v\n"
+        "import klicad_native_3d_viewer as v\n"
         "v.set_render_mode('opengl')"
     )
     assert_run_python_ok(r)
@@ -524,7 +524,7 @@ def test_gui_show_simulator_needs_schematic_first(kicad, auto_dismiss_dialogs):
     returns ok=False with kiface-load error when no schematic context.
     """
     r = kicad.run_python(
-        "import kicad_native_gui as g\n"
+        "import klicad_native_gui as g\n"
         "g.show_frame('simulator')"
     )
     assert_run_python_ok(r)
@@ -536,9 +536,9 @@ def test_gui_show_simulator_needs_schematic_first(kicad, auto_dismiss_dialogs):
 def test_gui_dismiss_dialogs_no_op(kicad):
     """dismiss_dialogs() on a clean state returns count=0 without error."""
     # First dismiss anything that's already up to get to a clean baseline
-    kicad.run_python("import kicad_native_gui as g; g.dismiss_dialogs()")
+    kicad.run_python("import klicad_native_gui as g; g.dismiss_dialogs()")
     r = kicad.run_python(
-        "import kicad_native_gui as g; g.dismiss_dialogs()"
+        "import klicad_native_gui as g; g.dismiss_dialogs()"
     )
     assert_run_python_ok(r)
     assert "'count': 0" in r.result_repr, r.result_repr
@@ -548,7 +548,7 @@ def test_gui_dismiss_dialogs_no_op(kicad):
 def test_gui_unknown_frame_raises(kicad):
     """An unknown frame name raises ValueError, doesn't crash KliCAD."""
     r = kicad.run_python(
-        "import kicad_native_gui as g\n"
+        "import klicad_native_gui as g\n"
         "g.show_frame('bogus_frame_name_xyz')"
     )
     assert not r.ok
@@ -557,7 +557,7 @@ def test_gui_unknown_frame_raises(kicad):
     assert_kicad_alive(kicad)
 
 
-# ---- kicad_native_settings ----
+# ---- klicad_native_settings ----
 
 def test_settings_roundtrip(kicad):
     """Get → set → get → restore roundtrip on system.local_history_debounce.
@@ -567,7 +567,7 @@ def test_settings_roundtrip(kicad):
     the end so we don't leave KliCAD in a different config than we found it.
     """
     r = kicad.run_python(
-        "import kicad_native_settings as s\n"
+        "import klicad_native_settings as s\n"
         "before = s.get('system.local_history_debounce')\n"
         "s.set('system.local_history_debounce', 0)\n"
         "after = s.get('system.local_history_debounce')\n"
@@ -583,21 +583,21 @@ def test_settings_roundtrip(kicad):
 def test_settings_dump(kicad):
     """dump('system') returns the system settings as a dict."""
     r = kicad.run_python(
-        "import kicad_native_settings as s; "
+        "import klicad_native_settings as s; "
         "isinstance(s.dump('system'), dict)"
     )
     assert_run_python_ok(r)
     assert r.result_repr == "True"
 
 
-# ---- kicad_native_sch_actions + kicad_native_schematic_state (Pattern B) ----
+# ---- klicad_native_sch_actions + klicad_native_schematic_state (Pattern B) ----
 
 def test_sch_actions_list_after_kiface_load(kicad):
     """After the schematic kiface loads, list_actions enumerates all
     registered TOOL_ACTIONs (process-wide; we filter for eeschema.*)."""
-    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    kicad.run_python("import klicad_native_gui as g; g.show_frame('schematic')")
     r = kicad.run_python(
-        "import kicad_native_sch_actions as sa; "
+        "import klicad_native_sch_actions as sa; "
         "len([a for a in sa.list_actions() if a.startswith('eeschema.')])"
     )
     assert_run_python_ok(r)
@@ -609,9 +609,9 @@ def test_sch_actions_list_after_kiface_load(kicad):
 def test_schematic_state_add_wire(kicad):
     """add_wire creates a SCH_LINE on LAYER_WIRE; summary reflects it."""
     # Ensure schematic is loaded
-    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    kicad.run_python("import klicad_native_gui as g; g.show_frame('schematic')")
     r = kicad.run_python(
-        "import kicad_native_schematic_state as ss\n"
+        "import klicad_native_schematic_state as ss\n"
         "before = ss.get_items_summary()['wires']\n"
         "result = ss.add_wire(20.0, 20.0, 50.0, 20.0)\n"
         "after = ss.get_items_summary()['wires']\n"
@@ -625,9 +625,9 @@ def test_schematic_state_add_wire(kicad):
 
 def test_schematic_state_add_junction(kicad):
     """add_junction creates a SCH_JUNCTION."""
-    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    kicad.run_python("import klicad_native_gui as g; g.show_frame('schematic')")
     r = kicad.run_python(
-        "import kicad_native_schematic_state as ss\n"
+        "import klicad_native_schematic_state as ss\n"
         "result = ss.add_junction(30.0, 30.0)\n"
         "result.get('ok')"
     )
@@ -638,9 +638,9 @@ def test_schematic_state_add_junction(kicad):
 
 def test_schematic_state_add_label(kicad):
     """add_label creates a SCH_LABEL with the given text."""
-    kicad.run_python("import kicad_native_gui as g; g.show_frame('schematic')")
+    kicad.run_python("import klicad_native_gui as g; g.show_frame('schematic')")
     r = kicad.run_python(
-        "import kicad_native_schematic_state as ss\n"
+        "import klicad_native_schematic_state as ss\n"
         "result = ss.add_label(40.0, 40.0, 'KLICAD_TEST_LABEL', kind='local')\n"
         "result.get('ok')"
     )
@@ -652,10 +652,10 @@ def test_schematic_state_add_label(kicad):
 def test_gui_list_open_frames(kicad):
     """After spawning some frames, list_open_frames reflects them."""
     kicad.run_python(
-        "import kicad_native_gui as g; g.show_frame('schematic'); g.show_frame('pcb_editor')"
+        "import klicad_native_gui as g; g.show_frame('schematic'); g.show_frame('pcb_editor')"
     )
     r = kicad.run_python(
-        "import kicad_native_gui as g; len(g.list_open_frames())"
+        "import klicad_native_gui as g; len(g.list_open_frames())"
     )
     assert_run_python_ok(r)
     # Should be at least 2 (project manager + the frames we spawned)

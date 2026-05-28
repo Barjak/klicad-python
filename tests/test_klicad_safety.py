@@ -6,7 +6,7 @@ Two kinds of tests:
    run_python round-trips, state persists across calls, exceptions are
    captured cleanly (not swallowed or crashing).
 
-2. **Import-each-binding** — every kicad_native_* module imports inside
+2. **Import-each-binding** — every klicad_native_* module imports inside
    the embedded interpreter without crashing.  This catches stale
    bindings whose underlying C++ deps moved.  Does NOT call any
    subsystem operation (those live in test_klicad_bindings.py).
@@ -20,62 +20,62 @@ from conftest import assert_kicad_alive, assert_run_python_ok
 # Every binding TU defines one PYBIND11_EMBEDDED_MODULE; this is the list.
 ALL_BINDING_MODULES = [
     "kicad_native",
-    "kicad_native_bitmap2component",
-    "kicad_native_design_blocks",
-    "kicad_native_diff",
-    "kicad_native_drc",
-    "kicad_native_erc",
-    "kicad_native_export_3d",
-    "kicad_native_export_drill",
-    "kicad_native_export_gerbers",
-    "kicad_native_export_sch_bom",
-    "kicad_native_export_sch_netlist",
-    "kicad_native_export_sch_plot",
-    "kicad_native_fp_export_svg",
-    "kicad_native_fp_upgrade",
-    "kicad_native_gerber_diff",
-    "kicad_native_gerber_export_png",
-    "kicad_native_gerber_info",
-    "kicad_native_gui",
-    "kicad_native_io_discovery",
-    "kicad_native_jobset",
-    "kicad_native_kiway_events",
-    "kicad_native_library_tables",
-    "kicad_native_local_history",
-    "kicad_native_pcb_calculator",
-    "kicad_native_project_manager",
-    "kicad_native_pcb_import",
-    "kicad_native_pcb_upgrade",
-    "kicad_native_pcm",
-    "kicad_native_render",
-    "kicad_native_sch_upgrade",
-    "kicad_native_settings",
-    "kicad_native_sym_export_svg",
-    "kicad_native_sym_upgrade",
+    "klicad_native_bitmap2component",
+    "klicad_native_design_blocks",
+    "klicad_native_diff",
+    "klicad_native_drc",
+    "klicad_native_erc",
+    "klicad_native_export_3d",
+    "klicad_native_export_drill",
+    "klicad_native_export_gerbers",
+    "klicad_native_export_sch_bom",
+    "klicad_native_export_sch_netlist",
+    "klicad_native_export_sch_plot",
+    "klicad_native_fp_export_svg",
+    "klicad_native_fp_upgrade",
+    "klicad_native_gerber_diff",
+    "klicad_native_gerber_export_png",
+    "klicad_native_gerber_info",
+    "klicad_native_gui",
+    "klicad_native_io_discovery",
+    "klicad_native_jobset",
+    "klicad_native_kiway_events",
+    "klicad_native_library_tables",
+    "klicad_native_local_history",
+    "klicad_native_pcb_calculator",
+    "klicad_native_project_manager",
+    "klicad_native_pcb_import",
+    "klicad_native_pcb_upgrade",
+    "klicad_native_pcm",
+    "klicad_native_render",
+    "klicad_native_sch_upgrade",
+    "klicad_native_settings",
+    "klicad_native_sym_export_svg",
+    "klicad_native_sym_upgrade",
 ]
 
 # Kiface-resident modules (Pattern B in BINDING_PATTERN.md).  These only
 # become importable after the relevant editor kiface has been loaded.
 KIFACE_RESIDENT_MODULES = [
-    ("kicad_native_annotation",       "schematic"),
-    ("kicad_native_hierarchy",        "schematic"),
-    ("kicad_native_sch_actions",      "schematic"),
-    ("kicad_native_schematic_state",  "schematic"),
-    ("kicad_native_sim_advanced",     "simulator"),
-    ("kicad_native_symbol_editor",    "symbol_editor"),
-    ("kicad_native_simulator",        "simulator"),
-    ("kicad_native_3d_resolver",      "pcb_editor"),
-    ("kicad_native_3d_viewer",        "pcb_editor"),
-    ("kicad_native_drc_rules",        "pcb_editor"),
-    ("kicad_native_netinfo",          "pcb_editor"),
-    ("kicad_native_pcb_state",        "pcb_editor"),
-    ("kicad_native_pcb_actions",      "pcb_editor"),
-    ("kicad_native_stackup",          "pcb_editor"),
-    ("kicad_native_sync",             "pcb_editor"),
-    ("kicad_native_cvpcb",            "cvpcb"),
-    ("kicad_native_footprint_editor", "footprint_editor"),
-    ("kicad_native_gerbview",         "gerbview"),
-    ("kicad_native_pagelayout",       "page_layout"),
+    ("klicad_native_annotation",       "schematic"),
+    ("klicad_native_hierarchy",        "schematic"),
+    ("klicad_native_sch_actions",      "schematic"),
+    ("klicad_native_schematic_state",  "schematic"),
+    ("klicad_native_sim_advanced",     "simulator"),
+    ("klicad_native_symbol_editor",    "symbol_editor"),
+    ("klicad_native_simulator",        "simulator"),
+    ("klicad_native_3d_resolver",      "pcb_editor"),
+    ("klicad_native_3d_viewer",        "pcb_editor"),
+    ("klicad_native_drc_rules",        "pcb_editor"),
+    ("klicad_native_netinfo",          "pcb_editor"),
+    ("klicad_native_pcb_state",        "pcb_editor"),
+    ("klicad_native_pcb_actions",      "pcb_editor"),
+    ("klicad_native_stackup",          "pcb_editor"),
+    ("klicad_native_sync",             "pcb_editor"),
+    ("klicad_native_cvpcb",            "cvpcb"),
+    ("klicad_native_footprint_editor", "footprint_editor"),
+    ("klicad_native_gerbview",         "gerbview"),
+    ("klicad_native_pagelayout",       "page_layout"),
 ]
 
 
@@ -130,7 +130,7 @@ def test_run_python_syntax_error(kicad):
     assert_kicad_alive(kicad)
 
 
-def test_kicad_native_echo(kicad):
+def test_klicad_native_echo(kicad):
     """The smoke-probe binding in kicad_native still works (canary for
     embedded interp + pybind11 lifecycle)."""
     r = kicad.run_python(
@@ -140,7 +140,7 @@ def test_kicad_native_echo(kicad):
     assert r.result_repr == "'round-trip'"
 
 
-def test_kicad_native_version_binding(kicad):
+def test_klicad_native_version_binding(kicad):
     """kicad_native.version() calls real C++ code (GetMajorMinorPatchVersion)."""
     r = kicad.run_python("import kicad_native; kicad_native.version()")
     assert_run_python_ok(r)
@@ -198,7 +198,7 @@ def test_kiface_binding_appears_after_load(kicad, module_name, kiface_frame):
     """
     # Trigger the kiface (idempotent — Player(true) is a no-op if already up)
     r = kicad.run_python(
-        f"import kicad_native_gui as g; g.show_frame({kiface_frame!r})"
+        f"import klicad_native_gui as g; g.show_frame({kiface_frame!r})"
     )
     assert_run_python_ok(r)
     assert "'ok': True" in r.result_repr, r.result_repr
