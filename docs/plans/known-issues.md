@@ -32,3 +32,35 @@ path bypasses this disconnect.
 
 Status: blocked on the main feature work; not user-visible in the
 standard "launch fresh from manager" flow.
+
+## Status: fixed
+
+Fixed 2026-05-27 on KliCAD `loop/integration-7` in commit
+`e7ecca48acd790998956e94daabf44bf364a22ad` via Option A
+(binding-level disconnect).  `pm_load_project` now sends a new
+`MAIL_PROJECT_TEARDOWN` KIWAY mail to any live `FRAME_SCH` /
+`FRAME_PCB_EDITOR` before calling `SETTINGS_MANAGER::UnloadProject`,
+mirroring the wx file-open flow at `eeschema/files-io.cpp:199` and
+`pcbnew/files.cpp:602`.  Receivers null out `SCHEMATIC::m_project` /
+`BOARD::m_project` so the subsequent `LoadProject` can't dereference
+a freed PROJECT.
+
+Mail routing goes through `KIWAY::ExpressMail`, which uses
+`Player(..., doCreate=false)` internally --- so the disconnect is a
+no-op when no editor frame is up (headless `kicad-cli api-server`
+case), and we never accidentally instantiate an editor frame just to
+tell it to release a pointer.
+
+Files touched on the KliCAD side:
+
+- `include/mail_type.h` --- new `MAIL_PROJECT_TEARDOWN` enumerator
+- `common/api/bindings_project_manager.cpp` --- `pm_load_project`
+  sends the mail and calls `mgr.UnloadProject(&mgr.Prj(), false)`
+  before `mgr.LoadProject(...)`
+- `eeschema/cross-probing.cpp` --- `SCH_EDIT_FRAME::KiwayMailIn`
+  handles `MAIL_PROJECT_TEARDOWN` via `m_schematic->SetProject(nullptr)`
+- `pcbnew/cross-probing.cpp` --- `PCB_EDIT_FRAME::KiwayMailIn` handles
+  `MAIL_PROJECT_TEARDOWN` via `GetBoard()->ClearProject()`
+
+Workarounds listed above are no longer required; `conftest.py` does
+not need to scrub `open_projects` from kicad.json before launch.
