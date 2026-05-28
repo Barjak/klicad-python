@@ -1,28 +1,28 @@
-"""A.11: end-to-end verification that a multi-channel (repeat=N) Circuit
-round-trips through ``to_schematic`` + ``kicad-cli sch export netlist``
-without crashing and lands the expected on-disk shape.
+"""A.11 (post-Candidate-A): end-to-end verification that a multi-channel
+(repeat=N) Circuit round-trips through ``to_schematic`` + ``kicad-cli sch
+export netlist`` without crashing and lands the **vectorized** on-disk
+shape.
 
-Two distinct outcomes are pinned:
+After the R5.7-collapse, the body sheet declares ONE component (one R
+wired to scalar nets ``IN``/``OUT``) and ONE scalar hier-label per
+declared port (``GATE``, ``OUT``).  The parent still emits a bus-shaped
+sheet pin per declared bus port (R5.6, unchanged).  The matcher in
+``connection_graph.cpp`` accepts the bus base-name on the body side via
+Candidate A's base-name fallback, so each slot K's single body subgraph
+binds to bit K of the parent's bus.
 
-1. **Hard regression guard** (always asserted):
-   - The netlist emit succeeds (no kicad-cli segfault, the historical
-     symptom of the pre-66b0239 stale-sheetList UAF and the original
-     fan-out crash chain).
-   - The schematic carries one bus-shaped sheet pin per declared bus
-     port on the parent side (R5.6).
-   - The body sheet carries N bare bit-member hier-labels per bus
-     port (R5.7), one per slot index, with no bracketed forms.
+Outcomes asserted:
 
-2. **Soft gap marker** (xfail until the C++ netlist exporter consumes
-   R3.3's per-slot bit binding):
-   - Per-slot bus-bit join: each slot K's body subgraph ends up on
-     parent net ``GBUS[K]`` rather than on a slot-local
-     ``/U_CH:K/GATEK`` net.  R3.3 wires up the connection_graph
-     reverse-direction binding (`bbea8ea1b5`, `9275ff4cd6`) but the
-     `NETLIST_EXPORTER_XML::makeListOfNets` path still keys nets on
-     `GetNetMap()` entries that aren't merged after fan-out, so the
-     netlist text still shows slot-local nets for slots 1..N-1.
-     Tracked as a follow-up audit item.
+1. ``kicad-cli sch export netlist`` succeeds (no crash).
+2. The child sheet carries scalar hier-labels matching the port base
+   names (``GATE``, ``OUT``) — NOT N bare bit-member forms (that was
+   the hand-unrolled R5.7 shape Candidate A replaces) and NOT bracketed
+   forms.
+3. With repeat=4 and one body resistor, the netlist contains exactly
+   4 component instances (R1..R4) — down from 16 in the hand-unrolled
+   shape.
+4. Each slot K's resistor binds to parent bus bits ``GBUS<K>`` and
+   ``OBUS<K>`` — the per-slot bit join (R3.3) still holds end-to-end.
 """
 from __future__ import annotations
 
@@ -49,19 +49,18 @@ def _kicad_cli() -> str | None:
 
 
 def _build_multi_channel_circuit(repeat: int = 4) -> Circuit:
-    """Bus-port child sheet with one body resistor per bus bit.
+    """Vectorized bus-port child sheet with ONE body resistor.
 
-    Mirrors the canonical multi-channel pattern: the body declares
-    parts for every bit of its bus ports, and each slot K's annotated
-    instance of the bit-K resistor binds to the parent's bit-K bus
-    member.  Slot K's other body parts (wired to bits != K) stay on
-    slot-local nets (the R3.3 fan-out semantics: only the slot's own
-    bit-K body net joins parent's bit K).
+    Candidate A canonical shape: the body declares its bus ports
+    (``GATE[0..N-1]``, ``OUT[0..N-1]``) but the component inside wires
+    to the scalar net names ``GATE``/``OUT``.  The C++ matcher's
+    base-name fallback binds each slot K's scalar ``GATE`` subgraph to
+    bit K of the parent's ``GBUS[0..N-1]`` bus (and likewise for OUT).
+    Body authoring expresses "the per-channel function" once.
     """
     ch = Circuit("ch", ports=[f"GATE[0..{repeat - 1}]",
                               f"OUT[0..{repeat - 1}]"])
-    for k in range(repeat):
-        ch.add(R(f"R{k + 1}", f"GATE[{k}]", f"OUT[{k}]", value="10k"))
+    ch.add(R("R1", "GATE", "OUT", value="10k"))
     top = Circuit("top_mc")
     top.add(ch.instance("U_CH",
                         repeat=repeat,
@@ -117,17 +116,17 @@ def multi_channel_emit(tmp_path: Path):
 
 def test_multi_channel_netlist_does_not_crash(multi_channel_emit):
     """Hard guard: ``kicad-cli sch export netlist`` on a repeat=4
-    schematic completes with rc=0 and a non-empty .net file.  With one
-    resistor per body bit, four slots produce 16 annotated component
-    instances total (R1..R16)."""
+    schematic completes with rc=0 and a non-empty .net file.  Candidate
+    A's vectorized body has ONE resistor; four slots produce 4
+    annotated component instances total (R1..R4)."""
     net = multi_channel_emit["net_text"]
     assert net, "netlist output is empty"
     assert "(export" in net
     refs = sorted(set(re.findall(r'\(comp\s+\(ref\s+"(R\d+)"', net)),
                   key=lambda r: int(r[1:]))
-    expected = [f"R{i + 1}" for i in range(16)]
+    expected = [f"R{i + 1}" for i in range(4)]
     assert refs == expected, (
-        f"expected R1..R16 across the four slots, got: {refs}"
+        f"expected R1..R4 across the four slots, got: {refs}"
     )
 
 
@@ -147,18 +146,32 @@ def test_parent_sheet_pin_is_bus_shaped(multi_channel_emit):
         assert f'(pin "OUT[{k}]"' not in sch
 
 
-def test_body_emits_bare_bit_hier_labels(multi_channel_emit):
-    """R5.7: body has N bare bit-member hier-labels per bus port (GATE0,
-    GATE1, ...) so R3.3's repeatBusPinBitName can match by exact name.
-    The body must NOT carry bracketed forms like GATE[0]."""
+def test_body_emits_scalar_hier_labels(multi_channel_emit):
+    """R5.7 collapse (Candidate A): the body emits exactly ONE scalar
+    hier-label per declared port, using the port's base name (``GATE``,
+    ``OUT``).  The C++ matcher's base-name fallback binds each slot K's
+    scalar subgraph to bit K of the parent's bus.  Bare per-bit forms
+    (``GATE0``..``GATE3``) and bracketed forms (``GATE[0]``..) must NOT
+    appear in the body."""
     child = multi_channel_emit["child_text"]
+    # Positive: exactly one scalar hier-label per port.
+    gate_count = child.count('(hierarchical_label "GATE"')
+    out_count  = child.count('(hierarchical_label "OUT"')
+    assert gate_count == 1, (
+        f"expected exactly one '(hierarchical_label \"GATE\"', got "
+        f"{gate_count}; child sheet head:\n{child[:1500]}"
+    )
+    assert out_count == 1, (
+        f"expected exactly one '(hierarchical_label \"OUT\"', got "
+        f"{out_count}"
+    )
+    # Negative: no bare bit-member forms and no bracketed forms.
     for k in range(4):
-        assert f'(hierarchical_label "GATE{k}"' in child, (
-            f"expected bare body hier-label GATE{k}"
+        assert f'(hierarchical_label "GATE{k}"' not in child, (
+            f"unexpected bare body hier-label GATE{k} — body should "
+            f"be vectorized after R5.7 collapse"
         )
-        assert f'(hierarchical_label "OUT{k}"' in child
-    # Negative: no bracketed hier-label forms.
-    for k in range(4):
+        assert f'(hierarchical_label "OUT{k}"' not in child
         assert f'(hierarchical_label "GATE[{k}]"' not in child
         assert f'(hierarchical_label "OUT[{k}]"' not in child
 

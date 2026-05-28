@@ -1064,18 +1064,12 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
     SCH_SHEET_PIN positions come from `klicad_native_hierarchy.list_sheet_pins`.
     """
     import ast
-    from ._bus import to_body_local_net
-    # R5.7: when emitting a multi-channel body's labels, translate body
-    # bus-member references (e.g., ``"GATE[0]"``) to KliCAD's bare bit
-    # form (``"GATE0"``) so the connection_graph fan-out at R3.3 can
-    # match the slot-K-specific bit name produced by repeatBusPinBitName.
-    # is_subcircuit + a declared bus port is the trigger; root Circuits
-    # and bus-free sub-circuits are unaffected.
-    body_port_decl = (
-        list(c._port_decl) if c.is_subcircuit and any(
-            "[" in p and ".." in p for p in c._port_decl
-        ) else []
-    )
+    # R5.7 collapse (Candidate A): body labels are emitted with the net
+    # names the user authored.  The matcher accepts the bus base-name on
+    # a scalar body port, so a user-authored scalar wiring (``R("R1",
+    # "IN", "OUT")``) lands a body label named ``IN`` that the C++
+    # base-name fallback binds to the parent's ``IN[0..3]`` bit-K on
+    # each slot path.  No body-local translation is needed.
     n = 0
     for p in c.parts:
         kiid = placed[p.ref]
@@ -1137,18 +1131,16 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
         # Symbol path (existing).
         for spice_pin, net_name in p.connections.items():
             kicad_pin_num = p.kicad_pin_map[spice_pin]
-            local_net = (to_body_local_net(net_name, body_port_decl)
-                         if body_port_decl else net_name)
             r = kicad.run_python(
                 f"import klicad_native_schematic_state as ss\n"
                 f"pos = ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})\n"
                 f"if not pos.get('ok'): raise RuntimeError(f'pin pos failed: ' + str(pos))\n"
-                f"ss.add_label(pos['x_mm'], pos['y_mm'], {local_net!r})\n"
+                f"ss.add_label(pos['x_mm'], pos['y_mm'], {net_name!r})\n"
                 f"True"
             )
             if not r.ok:
                 raise RuntimeError(
-                    f"failed labelling {p.ref}.{spice_pin} as {local_net}: "
+                    f"failed labelling {p.ref}.{spice_pin} as {net_name}: "
                     f"{r.exception_traceback}"
                 )
             n += 1
@@ -1393,27 +1385,22 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
         # If duplicate names exist, keep the first; delete the rest below.
         existing_by_name.setdefault(row["name"], row)
 
-    # R5.7: for body bus ports declared as ``GATE[0..N-1]`` emit N bare
-    # bit-member hier-labels (``GATE0``..``GATE<N-1>``) so R3.3's
-    # ``repeatBusPinBitName`` (which emits bare ``GATE<K>`` for slot K)
-    # finds an exact name match in the body and binds parent bit K to
-    # slot K's body subgraph.  Scalar ports + bus-free bodies keep the
-    # pre-R5.7 ``_ports_expanded`` behaviour, which spells each member
-    # with brackets (``GATE[0]``).
-    from ._bus import bus_bit_member_name, parse_bus_range
-    has_bus_port = any(parse_bus_range(p) is not None for p in sc_def._port_decl)
-    if has_bus_port:
-        target_names: list[str] = []
-        for p in sc_def._port_decl:
-            parsed = parse_bus_range(p)
-            if parsed is None:
-                target_names.append(p)
-                continue
-            base, low, high = parsed
-            target_names.extend(bus_bit_member_name(base, k)
-                                for k in range(low, high + 1))
-    else:
-        target_names = list(sc_def._ports_expanded)
+    # R5.7 collapse (Candidate A): with the matcher accepting the bus
+    # base-name as a fallback against a scalar body hier-port, the body
+    # emit is now ONE scalar hier-label per declared port — bus ports
+    # use their base name (``GATE`` for a port declared ``GATE[0..3]``),
+    # scalar ports use their literal name.  The matcher's bit-name path
+    # still works for any user-authored hand-unrolled bodies; this emit
+    # produces the vectorized canonical shape.
+    from ._bus import parse_bus_range
+    target_names: list[str] = []
+    for p in sc_def._port_decl:
+        parsed = parse_bus_range(p)
+        if parsed is None:
+            target_names.append(p)
+        else:
+            base, _low, _high = parsed
+            target_names.append(base)
     target_set = set(target_names)
 
     # Delete stale anchors (name not in port list) + duplicates.
