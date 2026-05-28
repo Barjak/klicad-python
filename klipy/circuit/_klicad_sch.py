@@ -482,6 +482,14 @@ def to_schematic(
     if not r.ok:
         raise RuntimeError(f"save_schematic failed: {r.exception_traceback}")
 
+    # C.6: feed the spec-derived netlist into KliCAD's ratsnest layer.
+    # Schematic is fully populated + saved on disk; pin coordinates are
+    # stable so the C.5 binding can resolve net names to pin positions.
+    # Soft-fails on all paths: missing kicad-cli, missing C.5 binding, or
+    # missing pins are reported but do NOT abort to_schematic — the
+    # schematic file is the primary product; the ratsnest layer is polish.
+    ratsnest_spec = _push_ratsnest_spec(c, kicad, sch_path)
+
     # Aggregate result: roll up child-sheet counts into the top-level dict
     # so downstream callers see the totals across the hierarchy.
     def _sum(key: str) -> int:
@@ -501,7 +509,76 @@ def to_schematic(
         "sch_path":        str(sch_path),
         "models_lib_path": str(models_lib_path),
         "project_path":    str(pro_path),
+        "ratsnest_spec":   ratsnest_spec,
     }
+
+
+def _push_ratsnest_spec(c: "Circuit", kicad, sch_path: Path) -> dict | None:
+    """Generate the netlist for ``c`` and hand it to the C.5 ratsnest binding.
+
+    Returns the dict echoed by ``klicad_native_ratsnest.set_spec`` (with
+    keys ``ok``, ``edges_placed``, ``nets_resolved``, ``missing_pins``)
+    on success, or ``None`` when the spec couldn't be pushed (kicad-cli
+    missing, the C.5 binding not yet built into the running KliCAD, etc.).
+
+    Never raises: every failure path warns to stderr and returns None so
+    ``to_schematic`` can complete.
+    """
+    import ast
+    import sys
+
+    # Step 1: build the netlist from the just-written schematic.  Use the
+    # narrow netlist_from_sch helper rather than to_netlist(circuit, ...)
+    # to avoid re-emitting the schematic (which would recurse into IPC).
+    try:
+        from ._netlist import netlist_from_sch
+        netlist_text = netlist_from_sch(sch_path)
+    except Exception as e:
+        sys.stderr.write(
+            f"[to_schematic] ratsnest spec skipped — netlist export failed: {e}\n"
+        )
+        return None
+
+    # Step 2: send the netlist to klicad_native_ratsnest.set_spec via IPC.
+    # repr() handles multi-line / quoted content safely (same pattern the
+    # rest of this module uses for snippet construction).
+    snippet = (
+        f"import klicad_native_ratsnest as r\n"
+        f"r.set_spec({netlist_text!r})"
+    )
+    try:
+        result = kicad.run_python(snippet)
+    except Exception as e:
+        sys.stderr.write(
+            f"[to_schematic] ratsnest spec skipped — run_python raised: {e}\n"
+        )
+        return None
+
+    if not result.ok:
+        tb = result.exception_traceback or ""
+        if "ModuleNotFoundError" in tb or "No module named" in tb:
+            sys.stderr.write(
+                "[to_schematic] ratsnest spec skipped — "
+                "klicad_native_ratsnest binding not present (rebuild KliCAD "
+                "to pick up C.5).\n"
+            )
+        else:
+            # Some other binding-side failure — surface a single line so the
+            # user has a hint without flooding the log.
+            last = tb.strip().splitlines()[-1] if tb.strip() else "(no traceback)"
+            sys.stderr.write(
+                f"[to_schematic] ratsnest spec skipped — set_spec failed: {last}\n"
+            )
+        return None
+
+    try:
+        return ast.literal_eval(result.result_repr or "None")
+    except (ValueError, SyntaxError) as e:
+        sys.stderr.write(
+            f"[to_schematic] ratsnest spec result unparseable ({e!r}): "
+            f"{result.result_repr!r}\n"
+        )
+        return None
 
 
 # ──────────────────────────────────────────────────────────────────────────
