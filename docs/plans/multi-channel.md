@@ -1,6 +1,19 @@
 # Multi-channel design (REPEAT-style sheets) — implementation plan
 
-Status: **READY TO START R0 — audit applied, open questions resolved**
+Status: **R0–C.7 LANDED on `loop/integration-7`; implementation diverged
+from this spec on the body's "scalar net" interpretation.**
+
+> ⚠ **Read before implementing**:
+> `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`
+> records a shape-preservation finding against R5.6/R5.7 + R3.3: the
+> spec calls (correctly) for a **vectorized** body with one scalar
+> hier-port per declared bus, but the implementation lowered into a
+> hand-unrolled body with N hier-labels and N body parts.  The fix is
+> at the C++ `CONNECTION_GRAPH::propagateToNeighbors` matcher and is
+> being audited for three candidate approaches.  Until that lands,
+> treat the DSL section below as the *authored* shape and assume
+> R5.6/R5.7's emit will collapse once the C++ accepts the
+> scalar-body-port match.
 
 This plan adds native N-into-1 sheet collapse to KliCAD's schematic
 editor + klicad-python's DSL.  Today a 60-channel design produces 60

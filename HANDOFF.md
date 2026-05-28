@@ -1,4 +1,12 @@
-# klicad-python handoff — 2026-05-17
+# klicad-python handoff — 2026-05-17 (orientation only)
+
+> ⚠ **Current state is in `docs/plans/STATUS.md`** (last updated
+> 2026-05-28).  Read that first if you're picking up active work.
+> This file is repo orientation: layout, façade design, test
+> conventions, push policy.  It's *not* current on bug priorities
+> — the open-crash sections in the linked KliCAD HANDOFF.md mostly
+> reflect the 2026-05-17 state and several of those bugs have since
+> been fixed.
 
 This repo is the Python side of KliCAD: forked `kipy` library + a `kipy.klicad`
 convenience façade + the pytest suite that drives KiCad over IPC.

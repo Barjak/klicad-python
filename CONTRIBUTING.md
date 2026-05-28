@@ -81,6 +81,21 @@ touching `kipy/klicad/`:
    They should be sentence-complete, name the cause, suggest the action,
    and not require reading source. Single source, no double-bookkeeping.
 
+9. **Shape preservation: artifacts must mirror the shape of the
+   input that produced them.** When the user writes one thing, the
+   generated artifact should represent that one thing once.  When the
+   user writes a parameter, the artifact should keep it as a
+   parameter, not silently expand.  When the user picks a name, the
+   artifact should carry that name, not a pattern-matched rewrite.
+   This is the *output-shape* analogue of the thin-layer principle's
+   *implementation-location* discipline: thin-layer asks "is this
+   logic in the right place?", shape preservation asks "does what
+   the user gets back look like what they asked for?"  Auditors
+   enforce both gates (see the shape-preservation check in
+   `~/projects/loop-state/loop-chunks.md` and the canonical incident
+   transcript under
+   `~/projects/loop-state/audit-context/`).
+
 ## When the principle bites — practical decision template
 
 Before adding code in `kipy/klicad/`, answer these four questions in the

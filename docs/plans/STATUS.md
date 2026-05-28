@@ -1,20 +1,129 @@
 # Session-handoff status (klicad-python + KliCAD)
 
-Last updated: end of session 2026-05-26 / 27.
+Last updated: end of session 2026-05-28.
 
 This is the "where are we and why" document for picking up cleanly in
 a future session.  It lists what's landed, what's paused mid-flight,
 and what's queued — with the motivation for each.
 
-## Repo state at handoff
+## Repo state at handoff (2026-05-28)
 
-- **klicad-python**: branch `feature/klicad-bindings`, tip `ecbf1ef`
-  ("R0: SCH_SHEET_PATH.Last() consumer audit — 36 sites surveyed").
-- **KliCAD**: branch `feature/always-on-api-server`, tip
-  `6ec1e373b9` ("api: list_labels binding; clear_routing
-  keep_hier_labels arg").
-- 89 pure-python tests passing, 29 live-KliCAD tests passing.
+- **klicad-python**: branch `loop/integration-7`, tip `d634f68`
+  ("C.6: wire to_netlist -> ratsnest.set_spec after to_schematic").
+- **KliCAD**: branch `loop/integration-7`, tip `73590277d4`
+  ("C.5: klicad_native_ratsnest.set_spec binding").
+- 289 klicad-python tests passing, 61 skipped, 0 failed.
+- 22 C++ QA cases passing across SchSheet / SchSheetPath /
+  RepeatedSheetHierarchy / RepeatedSheetBusFanout.
 - No uncommitted changes in either repo.
+
+## What landed since 2026-05-27 night
+
+This session closed out the multi-channel arc (R3.3 finish + R5.6/R5.7
++ A.11), the netlist-decoupling arc (C.5/C.6), and three crash fixes
+that surfaced during integration.  It also introduced a new auditor
+gate after the multi-channel arc landed *and* the user opened the
+artifact for the first time.
+
+### Crash fixes
+
+- **`35f1fa2a35`** (KliCAD) — null-check `m_SchematicSettings` in
+  `SIMULATOR_FRAME::SaveSettings`; shutdown SIGSEGV when the project
+  had been torn down by the time settings save fired.
+- **`66b0239127`** (KliCAD) — re-fetch `sheetList` from
+  `schematic->Hierarchy()` after `RecalculateConnections` in
+  `EESCHEMA_HELPERS::LoadSchematic`; multi-channel netlist export
+  was UAF'ing because `RefreshHierarchy` had cleared the synthetic-
+  clone cache while the caller still held stale paths.
+- **`e7ecca48ac`** (KliCAD) — `pm_load_project` now sends a new
+  `MAIL_PROJECT_TEARDOWN` KIWAY mail to `FRAME_SCH` and
+  `FRAME_PCB_EDITOR` before `UnloadProject`/`LoadProject`, so editor
+  frames disconnect from the about-to-be-freed PROJECT.  Fixed
+  the API-driven project-switch dangling pointer that the
+  `docs/plans/known-issues.md` entry described.
+
+### Multi-channel (R0 through C.7) — feature landed, shape under audit
+
+R0 through C.7 are committed and exercised by A.11.  The netlist
+exporter consolidation (R3.3 per-slot bit-member binding) is
+load-bearing for every netlist downstream of multi-channel.
+
+- **`f11fef9a89`** (KliCAD) — `describe_sheet_path` exposes
+  `is_synthetic`; klicad-python's hierarchy diffs now skip
+  BuildSheetList's synthetic clones when resolving the on-canvas
+  template KIID.
+- **`bf422c17bc`** (KliCAD) — R3.3 per-slot bit-member binding in
+  `propagateToNeighbors`.  Two issues fixed: the reverse-direction
+  same-type filter was rejecting scalar-body-port → bus-parent-pin
+  matches (multi-channel needs this), and the final Clone() pass was
+  cloning the whole-bus driver onto bit-bound subgraphs instead of
+  the K-th bus member.  Added
+  `CONNECTION_SUBGRAPH::m_repeat_bus_bit_index` set by the fan-out
+  sites from `path.GetSlotIndex()`.
+- **`f5e10b6`** (klicad-python) — R5.6 + R5.7: emit bus-shaped sheet
+  pins (was N scalar pins) and bare bit-member body labels (was
+  bracketed `GATE[0]`).  **Flagged for shape-preservation review:**
+  the emit lowers a vectorized DSL input into a hand-unrolled body
+  shape.  See
+  `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`.
+- **`4bc7548` / `961a619`** (klicad-python) — A.11 live test for the
+  multi-channel netlist round-trip; transitioned from
+  `xfail(strict=True)` to 5/5 strict pass once R3.3 landed.
+- **`a7a9efa`** (klicad-python) — A.12 PCB peer test scaffold.  One
+  smoke test passes; the full Multi-Channel peer-area assertion is a
+  strict-skip with two infra gaps tracked: (1) `kicad-cli pcb update
+  --netlist` doesn't exist on this build, (2) the Multi-Channel
+  placement tool opens a modal dialog that hangs IPC.
+
+### Netlist-decoupling (Track C C.5 + C.6)
+
+The schematic no longer has to be 1:1 with the netlist.  This makes
+the multi-channel shape-preservation finding fixable (see above).
+
+- **`73590277d4`** (KliCAD) — `klicad_native_ratsnest.set_spec`
+  binding.  Parses a KiCad-sexpr netlist string via the upstream
+  `SEXPR::PARSER`, looks up pin coordinates from the current
+  schematic, chains edges per-net into the existing M1
+  `SCH_RATSNEST_ITEM` via its existing `ClearEdges`/`AddEdge` API.
+  Returns `{ok, edges_placed, nets_resolved, missing_pins}`.
+- **`d634f68`** (klicad-python) — `to_schematic` calls `set_spec`
+  after `save_schematic` so the ratsnest layer carries spec-derived
+  edges.  Soft-fails on missing binding (`ModuleNotFoundError`),
+  failed netlist export, or IPC trouble — `to_schematic`'s primary
+  job is the schematic; ratsnest is the polish layer.  Splits
+  `to_netlist` to expose `netlist_from_sch(sch_path)` so the hook
+  doesn't re-enter `to_schematic`.
+
+### Audits this session
+
+- **Track B (ratsnest M1) integration audit** — confirmed M1
+  (a567efe824..a58ab05139) is already fully on `loop/integration-7`;
+  no cherry-pick needed; C.5–C.7 unblocked.
+- **Skips audit** — 60 skips reviewed; all legitimate platform /
+  availability gates or tracked infra gaps (A.12 GAP 1+2).  No stale
+  skips, no expected_crash markers, no whole-file skips.
+- **Vectorization shape-preservation discussion** — user opened the
+  multi-channel artifact, identified that R5.6/R5.7 lower the
+  vectorized DSL into a hand-unrolled body.  Discussion preserved in
+  `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`.
+  Caused two upstream changes:
+  (a) auditor spec gained a mandatory shape-preservation check (in
+      `~/projects/loop-state/loop-chunks.md` and
+      `~/.claude/plans/shiny-sleeping-karp.md`);
+  (b) the multi-channel spec at `docs/plans/multi-channel.md` now
+      carries a banner pointing at the audit-context file.
+
+### Vectorization auditor — in flight
+
+A dispatch is going out (or just went out) to find three candidate
+"correct" fixes at L4 (`connection_graph.cpp`) that let the matcher
+accept a scalar-body-port → bus-parent-pin binding via the path's
+slot index.  Once one of those lands, R5.6/R5.7 collapse to emit a
+single body part with scalar hier-ports, the body's .kicad_sch
+shrinks ~6×, and the DSL's `repeat=N` parameter stops being silently
+expanded.
+
+---
 
 ## What landed this session (in order)
 
