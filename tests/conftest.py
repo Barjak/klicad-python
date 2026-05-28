@@ -42,14 +42,34 @@ SWITCH_PROJECT_DIR = Path(__file__).resolve().parent / "fixtures" / "switch_proj
 SWITCH_PCB = SWITCH_PROJECT_DIR / "switch.kicad_pcb"
 SWITCH_SCH = SWITCH_PROJECT_DIR / "switch.kicad_sch"
 INSTALL_DIR = Path("/Users/shopnew/kicad-build/install/KliCAD.app")
-CRASH_DIR = Path.home() / "Library/Logs/DiagnosticReports"
+
+# Per-platform crash-report locations.  macOS leaves a .ips file in
+# DiagnosticReports.  Linux uses systemd-coredump under /var/lib (root-owned
+# in newer systemd but readable; if not, use `coredumpctl list`).
+CRASH_DIRS = [
+    Path.home() / "Library/Logs/DiagnosticReports",  # macOS
+    Path("/var/lib/systemd/coredump"),                # Linux systemd-coredump
+    Path.home() / ".local/share/kicad" / "10.99" / "crashes",  # KiCad own
+]
 
 
 def _snapshot_crashes() -> set[str]:
-    """List of crash-report filenames mentioning 'kicad' at this moment."""
-    if not CRASH_DIR.is_dir():
-        return set()
-    return {f.name for f in CRASH_DIR.iterdir() if "kicad" in f.name.lower()}
+    """List of crash-report filenames mentioning 'kicad' at this moment.
+
+    Combines all known platform-specific crash-dump locations.  An empty
+    return value means no crash directory exists OR no kicad crashes have
+    been recorded — both produce the same "baseline" semantics.
+    """
+    out: set[str] = set()
+    for d in CRASH_DIRS:
+        if not d.is_dir():
+            continue
+        try:
+            out.update(f.name for f in d.iterdir() if "kicad" in f.name.lower())
+        except PermissionError:
+            # /var/lib/systemd/coredump may be 0700 root-owned; skip if so.
+            continue
+    return out
 
 
 # --- session-scoped fixtures ----------------------------------------------
@@ -106,7 +126,7 @@ def _crash_baseline(request) -> None:
         f"({expected} expected from @expected_crash tests):",
     ]
     for name in new:
-        msg.append(f"  - {CRASH_DIR / name}")
+        msg.append(f"  - {name}")
     pytest.fail("\n".join(msg))
 
 
