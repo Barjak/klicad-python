@@ -93,6 +93,59 @@ def expand_one(name: str) -> list[str]:
     return [name]
 
 
+def bus_bit_member_name(base: str, bit: int) -> str:
+    """KliCAD's canonical name for bit K of a bus.
+
+    Mirrors ``NET_SETTINGS::ParseBusVector`` (which emits bare
+    ``DATA0``-style members from ``DATA[0..7]``).  R3.3's
+    ``repeatBusPinBitName`` returns this exact form, so body-side
+    hier-labels and body-internal net names that need to match the
+    fan-out must use this rendering — NOT ``DATA[0]`` (bracketed).
+    """
+    return f"{base}{bit}"
+
+
+def to_body_local_net(net: str, port_decl: Sequence[str]) -> str:
+    """Translate a body-internal net name to KliCAD's bus-member form.
+
+    For a body whose ``port_decl`` declares a bus port like
+    ``"DATA[0..7]"``, a body-internal net written ``"DATA[3]"``
+    must be emitted as the bare member ``"DATA3"`` so that R3.3's
+    bus-pin bit fan-out (``repeatBusPinBitName``) can match it to
+    bit 3 of the parent's bus.  Scalar nets and nets whose base
+    prefix isn't declared as a bus in this body are returned
+    unchanged.
+
+    Parameters
+    ----------
+    net
+        The body-internal net name, e.g. ``"DATA[3]"`` or ``"VCC"``.
+    port_decl
+        The body's declared ports (``Circuit._port_decl``), e.g.
+        ``["EN", "DATA[0..7]"]``.
+
+    Returns
+    -------
+    The translated net name suitable for emission as a label /
+    hier-label in the body's ``.kicad_sch``.
+    """
+    parsed = parse_bus_member(net)
+    if parsed is None:
+        return net
+    base, bit = parsed
+    # Only translate if `<base>[<a>..<b>]` is one of this body's
+    # declared bus ports; otherwise the user wrote a literal scalar
+    # net like ``"FOO[3]"`` that happens to look like a bus member.
+    for p in port_decl:
+        parsed_range = parse_bus_range(p)
+        if parsed_range is None:
+            continue
+        p_base, low, high = parsed_range
+        if p_base == base and low <= bit <= high:
+            return bus_bit_member_name(base, bit)
+    return net
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Port-list and port-map expansion
 # ──────────────────────────────────────────────────────────────────────────

@@ -682,6 +682,12 @@ class SubcircuitInstance(Part):
         # argument order.
         self.pin_names = tuple(expand_port_decl(definition._port_decl))
         self.connections = {p: expanded[p] for p in self.pin_names}
+        # R5.6: preserve the unexpanded port_map so multi-channel emit can
+        # label parent-side wires with the bus net (e.g., "GBUS[0..3]")
+        # alongside the bus-shaped sheet pin.  Keys are the definition's
+        # declared ports (port_decl, e.g., "GATE[0..3]"); values are the
+        # user-provided net bindings (e.g., "GBUS[0..3]").
+        self.port_map = dict(port_map)
 
     def _x_ref(self) -> str:
         return self.ref if self.ref[:1].upper() == "X" else f"X{self.ref}"

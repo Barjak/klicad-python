@@ -620,8 +620,15 @@ def _emit_one_sheet(c: "Circuit",
         )
         if r.ok:
             for row in ast.literal_eval(r.result_repr):
-                if int(row.get("depth", 0)) == 1:
-                    existing_sheets_by_ref[row["name"]] = row
+                if int(row.get("depth", 0)) != 1:
+                    continue
+                # R5.6: skip BuildSheetList's synthetic clones — multi-channel
+                # sheets expand into N hierarchy paths sharing the same name,
+                # but only the on-canvas template's KIID is addressable for
+                # downstream binding calls (add_sheet_pin, delete_by_kiid).
+                if row.get("is_synthetic"):
+                    continue
+                existing_sheets_by_ref[row["name"]] = row
 
     # Target sets — scalar parts vs sheet instances.
     scalar_parts = [p for p in c.parts if p.kind != "SUBCIRCUIT"]
@@ -980,6 +987,18 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
     SCH_SHEET_PIN positions come from `klicad_native_hierarchy.list_sheet_pins`.
     """
     import ast
+    from ._bus import to_body_local_net
+    # R5.7: when emitting a multi-channel body's labels, translate body
+    # bus-member references (e.g., ``"GATE[0]"``) to KliCAD's bare bit
+    # form (``"GATE0"``) so the connection_graph fan-out at R3.3 can
+    # match the slot-K-specific bit name produced by repeatBusPinBitName.
+    # is_subcircuit + a declared bus port is the trigger; root Circuits
+    # and bus-free sub-circuits are unaffected.
+    body_port_decl = (
+        list(c._port_decl) if c.is_subcircuit and any(
+            "[" in p and ".." in p for p in c._port_decl
+        ) else []
+    )
     n = 0
     for p in c.parts:
         kiid = placed[p.ref]
@@ -998,9 +1017,27 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
             sheet_pins = ast.literal_eval(r.result_repr)
             pin_pos = {row["name"]: (row["x_mm"], row["y_mm"])
                        for row in sheet_pins}
-            # For SubcircuitInstance, p.pin_names == p.connections.keys() ==
-            # expanded port list; the net is the external binding.
-            for port_name, net_name in p.connections.items():
+            # R5.6: multi-channel — sheet pins are bus-shaped (one pin per
+            # declared port, e.g., "GATE[0..3]") and the parent label at
+            # the pin position must carry the bus net so the connection
+            # graph sees a bus driver into the pin.  Build (pin_name,
+            # net_label) by walking the definition's port_decl: for each
+            # declared entry the matching binding from port_map (keyed by
+            # base name for bus ports, exact name for scalars) is the
+            # parent net.
+            if getattr(p, "repeat_count", 1) > 1:
+                from ._bus import parse_bus_range
+                port_iter = []
+                for decl_port in p.definition._port_decl:
+                    parsed = parse_bus_range(decl_port)
+                    key = parsed[0] if parsed else decl_port
+                    if key in p.port_map:
+                        port_iter.append((decl_port, p.port_map[key]))
+            else:
+                # For SubcircuitInstance, p.pin_names == p.connections.keys() ==
+                # expanded port list; the net is the external binding.
+                port_iter = list(p.connections.items())
+            for port_name, net_name in port_iter:
                 if port_name not in pin_pos:
                     # Port hasn't been pinned yet — happens during placement
                     # before _add_sheet_pins runs.  Skip this iteration; the
@@ -1023,16 +1060,18 @@ def _label_pins(c: "Circuit", kicad, placed: dict[str, str]) -> int:
         # Symbol path (existing).
         for spice_pin, net_name in p.connections.items():
             kicad_pin_num = p.kicad_pin_map[spice_pin]
+            local_net = (to_body_local_net(net_name, body_port_decl)
+                         if body_port_decl else net_name)
             r = kicad.run_python(
                 f"import klicad_native_schematic_state as ss\n"
                 f"pos = ss.get_symbol_pin_position({kiid!r}, {kicad_pin_num!r})\n"
                 f"if not pos.get('ok'): raise RuntimeError(f'pin pos failed: ' + str(pos))\n"
-                f"ss.add_label(pos['x_mm'], pos['y_mm'], {net_name!r})\n"
+                f"ss.add_label(pos['x_mm'], pos['y_mm'], {local_net!r})\n"
                 f"True"
             )
             if not r.ok:
                 raise RuntimeError(
-                    f"failed labelling {p.ref}.{spice_pin} as {net_name}: "
+                    f"failed labelling {p.ref}.{spice_pin} as {local_net}: "
                     f"{r.exception_traceback}"
                 )
             n += 1
@@ -1163,7 +1202,16 @@ def _add_sheet_pins(c: "Circuit", kicad,
         existing_pins: list[dict] = ast.literal_eval(r.result_repr) if r.ok else []
         existing_by_name = {pin["name"]: pin for pin in existing_pins}
 
-        target_names = list(p.pin_names)
+        # R5.6: multi-channel — emit ONE sheet pin per declared port (bus
+        # syntax preserved as `GATE[0..N-1]`) so KliCAD's connection_graph
+        # bit-fan-out at slot K can map the K-th bus member to the body's
+        # scalar hier-label `GATE<K>`.  For non-multi-channel sheets keep
+        # the legacy fully-expanded behaviour so a body with a bus port
+        # at repeat=1 still names each bit explicitly.
+        if getattr(p, "repeat_count", 1) > 1:
+            target_names = list(p.definition._port_decl)
+        else:
+            target_names = list(p.pin_names)
         target_set = set(target_names)
         existing_set = set(existing_by_name)
 
@@ -1268,7 +1316,27 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
         # If duplicate names exist, keep the first; delete the rest below.
         existing_by_name.setdefault(row["name"], row)
 
-    target_names = list(sc_def._ports_expanded)
+    # R5.7: for body bus ports declared as ``GATE[0..N-1]`` emit N bare
+    # bit-member hier-labels (``GATE0``..``GATE<N-1>``) so R3.3's
+    # ``repeatBusPinBitName`` (which emits bare ``GATE<K>`` for slot K)
+    # finds an exact name match in the body and binds parent bit K to
+    # slot K's body subgraph.  Scalar ports + bus-free bodies keep the
+    # pre-R5.7 ``_ports_expanded`` behaviour, which spells each member
+    # with brackets (``GATE[0]``).
+    from ._bus import bus_bit_member_name, parse_bus_range
+    has_bus_port = any(parse_bus_range(p) is not None for p in sc_def._port_decl)
+    if has_bus_port:
+        target_names: list[str] = []
+        for p in sc_def._port_decl:
+            parsed = parse_bus_range(p)
+            if parsed is None:
+                target_names.append(p)
+                continue
+            base, low, high = parsed
+            target_names.extend(bus_bit_member_name(base, k)
+                                for k in range(low, high + 1))
+    else:
+        target_names = list(sc_def._ports_expanded)
     target_set = set(target_names)
 
     # Delete stale anchors (name not in port list) + duplicates.
