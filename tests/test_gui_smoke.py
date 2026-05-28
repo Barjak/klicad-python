@@ -301,7 +301,7 @@ def test_smoke_artifacts_summary(loaded_switch_project):
     """Print the screenshot directory + KliCAD version so a `pytest -s` run
     surfaces actionable info for visual review."""
     r = loaded_switch_project.run_python(
-        "import kicad_native; kicad_native.version()"
+        "import klicad_native; klicad_native.version()"
     )
     assert_run_python_ok(r)
 

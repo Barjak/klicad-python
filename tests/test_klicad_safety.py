@@ -19,7 +19,7 @@ from conftest import assert_kicad_alive, assert_run_python_ok
 
 # Every binding TU defines one PYBIND11_EMBEDDED_MODULE; this is the list.
 ALL_BINDING_MODULES = [
-    "kicad_native",
+    "klicad_native",
     "klicad_native_bitmap2component",
     "klicad_native_design_blocks",
     "klicad_native_diff",
@@ -131,18 +131,18 @@ def test_run_python_syntax_error(kicad):
 
 
 def test_klicad_native_echo(kicad):
-    """The smoke-probe binding in kicad_native still works (canary for
+    """The smoke-probe binding in klicad_native still works (canary for
     embedded interp + pybind11 lifecycle)."""
     r = kicad.run_python(
-        "import kicad_native; kicad_native.echo('round-trip')"
+        "import klicad_native; klicad_native.echo('round-trip')"
     )
     assert_run_python_ok(r)
     assert r.result_repr == "'round-trip'"
 
 
 def test_klicad_native_version_binding(kicad):
-    """kicad_native.version() calls real C++ code (GetMajorMinorPatchVersion)."""
-    r = kicad.run_python("import kicad_native; kicad_native.version()")
+    """klicad_native.version() calls real C++ code (GetMajorMinorPatchVersion)."""
+    r = kicad.run_python("import klicad_native; klicad_native.version()")
     assert_run_python_ok(r)
     # Should be a quoted M.N.P string
     assert r.result_repr.startswith("'10."), r.result_repr

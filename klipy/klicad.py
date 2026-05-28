@@ -290,6 +290,51 @@ class KliCAD:
     # them programmatically.
     # ──────────────────────────────────────────────────────────────────
 
+    def control_dismiss_modal(self) -> dict:
+        """Dismiss the topmost modal dialog via the control-plane context.
+
+        Works EVEN WHEN the wx main event loop is suspended in a modal's
+        nested event loop — i.e., when normal ``run_python`` calls are
+        timing out because their queued events can't dispatch.
+
+        Mechanism: opens a fresh ``KiCadClient`` tagged with the sentinel
+        ``client_name`` ``__control_dismiss_modal__``.  The KliCAD API
+        server (since the ``nng_ctx`` refactor) accepts requests on
+        multiple concurrent contexts.  When one context is parked
+        waiting for the wx main loop to dispatch a normal request, the
+        control-plane request lands on a *different* context, is
+        recognized via the sentinel ``client_name``, and is handled
+        SYNCHRONOUSLY on an NNG worker thread — the wxQueueEvent for
+        ``wxEVT_BUTTON``/``wxID_CANCEL`` is posted directly to the
+        modal dialog's handler, where it dispatches in the modal's own
+        event loop.
+
+        Returns ``{"ok": bool, "message": str}``.  ``ok`` is True if
+        the request reached the server and a modal was found to
+        dismiss; False otherwise.  Either way, this does NOT block
+        waiting for the modal to actually close — the caller should
+        poll (e.g., retry the prior failing ``run_python``).
+        """
+        from klipy.client import KiCadClient
+
+        try:
+            tmp_client = KiCadClient(
+                self._client._socket_path,
+                "__control_dismiss_modal__",
+                self._client._kicad_token,
+                timeout_ms=5_000,
+            )
+            # The server intercepts based on client_name BEFORE looking at
+            # the message body; any valid concrete protobuf message works
+            # as the carrier.  Use an empty RunPython for minimal payload.
+            req = base_commands_pb2.RunPython()
+            req.code = ""
+            resp = tmp_client.send(req, base_commands_pb2.RunPythonResponse)
+            tmp_client.close()
+            return {"ok": resp.ok, "message": resp.stdout}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+
     def list_modal_buttons(self) -> list[dict]:
         """Enumerate buttons on KliCAD's topmost modal dialog (if any).
 
