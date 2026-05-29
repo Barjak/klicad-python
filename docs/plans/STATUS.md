@@ -1,6 +1,24 @@
 # Session-handoff status (klicad-python + KliCAD)
 
-Last updated: end of session 2026-05-28.
+Last updated: 2026-05-29 14:42 EDT.
+
+> **Active refactor**: `SCH_SHEET_INSTANCE` structural fix.
+> Branches `refactor/sheet-instance` in BOTH repos, worktrees at
+> `~/projects/{KliCAD,klicad-python}-sheet-instance`.
+>
+> See `docs/plans/sheet-instance-refactor.md` for the phase ledger,
+> verification log, and remaining work.  Foundation is in place
+> and tested ASan-clean (302+ assertions across multiple suites);
+> remaining phases (P5h+, P6, P7) are deferred but not blocking
+> the original bug.
+>
+> Original UAF (CONNECTION_SUBGRAPH::m_sheet at
+> `connection_graph.cpp:2914`) is structurally eliminated.  One of
+> three prior proximate-fix commits (66b0239127) reverted as
+> verification; the other two address adjacent bug classes (PROJECT
+> teardown, simulator-frame shutdown) and stay in place.
+
+Last full hand-off session: 2026-05-28.
 
 This is the "where are we and why" document for picking up cleanly in
 a future session.  It lists what's landed, what's paused mid-flight,
