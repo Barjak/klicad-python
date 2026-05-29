@@ -77,14 +77,18 @@ P5c Path / Cmp / Rehash / op< / PathAsString → mirror    73f8ac3718  ✓
 P5d connection_graph LastScreen → SCHEMATIC resolution   4ebd07836e  ✓
 P5e hierarchy_pane 6 sites → SCHEMATIC resolution        121d705a14  ✓
 P5f Last() auto-safe for synthetic slots (structural)    88caa6d9f0  ✓
+P5g PathHumanReadable auto-safe via SCHEMATIC + mirror   f83566a62d  ✓
 P8a revert 66b0239127 (re-fetch sheetList workaround)    946064aa62  ✓
+P6  size / empty / pop_back from m_instances             35d99df1ca  ✓
+P6  SCHEMATIC back-pointer (m_schematicBackPtr)          fd34e6e7a4  ✓
 fixups (P2 dtor / P3 const-correct / KIID compare)       3 commits   ✓
 
-P5g… more consumer migrations                            deferred
-P6   delete m_sheets; require SCHEMATIC for resolution   deferred
-P7   delete synthetic-clone mechanism                    deferred
-P8b  e7ecca48ac / 35f1fa2a35 not in scope — different
-     bug classes, leave the prior fixes in place
+P5h… more consumer migrations                            in flight
+P6  remaining: at(), GetSheet() resolve via SCHEMATIC    in flight
+    m_sheets removal final step                          in flight
+P7  delete synthetic-clone mechanism                     queued
+P8b e7ecca48ac / 35f1fa2a35 not in scope — different
+    bug classes, leave the prior fixes in place
 ```
 
 ## Verification (under ASan, fresh build at 14:10)
