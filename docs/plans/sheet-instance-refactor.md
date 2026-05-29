@@ -75,12 +75,16 @@ P5a resolveHierPinPushTarget reads via SCH_SHEET_INSTANCE 057e3e4c4b ✓
 P5b regression tests use the safe API                    49d0a992a6  ✓
 P5c Path / Cmp / Rehash / op< / PathAsString → mirror    73f8ac3718  ✓
 P5d connection_graph LastScreen → SCHEMATIC resolution   4ebd07836e  ✓
+P5e hierarchy_pane 6 sites → SCHEMATIC resolution        121d705a14  ✓
+P5f Last() auto-safe for synthetic slots (structural)    88caa6d9f0  ✓
+P8a revert 66b0239127 (re-fetch sheetList workaround)    946064aa62  ✓
 fixups (P2 dtor / P3 const-correct / KIID compare)       3 commits   ✓
 
-P5e… more consumer migrations                            pending
-P6   delete m_sheets; require SCHEMATIC for resolution   pending
-P7   delete synthetic-clone mechanism                    pending
-P8   revert proximate fixes; klicad-python hardening     pending
+P5g… more consumer migrations                            deferred
+P6   delete m_sheets; require SCHEMATIC for resolution   deferred
+P7   delete synthetic-clone mechanism                    deferred
+P8b  e7ecca48ac / 35f1fa2a35 not in scope — different
+     bug classes, leave the prior fixes in place
 ```
 
 ## Verification (under ASan, fresh build at 14:10)
@@ -146,10 +150,30 @@ the original bug.  Listed in approximate priority order:
   `SCH_SHEET_INSTANCE` values directly without allocating any
   throwaway SCH_SHEETs.
 
-- **P8**: revert the three prior proximate fixes (`66b0239127`,
-  `e7ecca48ac`, `35f1fa2a35`) whose workarounds are obviated by the
-  structural fix.  Audit klicad-python's `SheetPath(proto_ref=…)`
-  wrapper for value-vs-reference semantics.
+- **P8**: revert prior proximate fixes that this refactor obsoletes.
+
+  - ✓ **66b0239127** *re-fetch sheetList after RecalculateConnections
+    in headless load*  Reverted at 946064aa62.  The workaround
+    addressed the exact UAF class this refactor closes: synthetic-
+    clone SCH_SHEET* held in a local sheetList across a
+    RefreshHierarchy.  After P5f (auto-safe `Last()`), the
+    structural fix subsumes it.  qa suite remains ASan-clean with
+    the revert in place.
+
+  - ☐ **e7ecca48ac** *api: disconnect SCHEMATIC/BOARD before
+    pm_load_project unloads*  Different bug class — PROJECT
+    teardown ordering on IPC project-switch.  Leave in place; the
+    SCH_SHEET_INSTANCE refactor doesn't touch the project-lifetime
+    machinery.
+
+  - ☐ **35f1fa2a35** *null-check m_SchematicSettings in SaveSettings*
+    Different bug class — simulator-frame shutdown when
+    SchematicSettings was already torn down at app close.  Leave
+    in place; defensive null-checks at shutdown are correct
+    independent of any SCH_SHEET_PATH refactor.
+
+  Plus klicad-python's `SheetPath(proto_ref=…)` wrapper audit for
+  value-vs-reference semantics.
 
 ## Wire format
 
