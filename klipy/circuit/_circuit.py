@@ -575,8 +575,11 @@ class Circuit:
         Delegates to the existing kicad-cli wrapper in
         klipy.circuit._netlist.  For multi-channel SubcircuitInstances
         (repeat_count > 1), KliCAD's C++ netlist exporter handles the
-        fan-out automatically via the synthetic-clone hierarchy that
-        R2 + R5.4 produce.
+        fan-out automatically: BuildSheetList materializes N
+        SCH_SHEET_PATHs whose trailing SCH_SHEET_INSTANCEs carry
+        distinct slot_kiids drawn from the template's
+        m_repeatInstances, and the exporter walks each path producing
+        one component instance per slot.
         """
         from ._netlist import to_netlist as _to_netlist
         return _to_netlist(self, schematic_dir=schematic_dir)

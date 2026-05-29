@@ -699,12 +699,14 @@ def _emit_one_sheet(c: "Circuit",
             for row in ast.literal_eval(r.result_repr):
                 if int(row.get("depth", 0)) != 1:
                     continue
-                # R5.6: skip BuildSheetList's synthetic clones — multi-channel
-                # sheets expand into N hierarchy paths sharing the same name,
-                # but only the on-canvas template's KIID is addressable for
-                # downstream binding calls (add_sheet_pin, delete_by_kiid).
-                if row.get("is_synthetic"):
-                    continue
+                # KliCAD P7: multi-channel sheets still expand into N
+                # hierarchy paths sharing the same name, but every path's
+                # leaf SCH_SHEET is the on-canvas template (no synthetic
+                # clones), so all N rows carry the template's KIID.  The
+                # dict-by-name assignment below naturally dedupes the N
+                # rows to one — the entry's uuid is the template, which
+                # is what downstream binding calls (add_sheet_pin,
+                # delete_by_kiid) need.
                 existing_sheets_by_ref[row["name"]] = row
 
     # Target sets — scalar parts vs sheet instances.
