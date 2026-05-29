@@ -74,12 +74,82 @@ P4b SCH_SHEET_PATH::m_instances mirror storage           69230f4271  ✓
 P5a resolveHierPinPushTarget reads via SCH_SHEET_INSTANCE 057e3e4c4b ✓
 P5b regression tests use the safe API                    49d0a992a6  ✓
 P5c Path / Cmp / Rehash / op< / PathAsString → mirror    73f8ac3718  ✓
+P5d connection_graph LastScreen → SCHEMATIC resolution   4ebd07836e  ✓
+fixups (P2 dtor / P3 const-correct / KIID compare)       3 commits   ✓
 
-P5d… remaining consumer migrations                       pending
+P5e… more consumer migrations                            pending
 P6   delete m_sheets; require SCHEMATIC for resolution   pending
 P7   delete synthetic-clone mechanism                    pending
 P8   revert proximate fixes; klicad-python hardening     pending
 ```
+
+## Verification (under ASan, fresh build at 14:10)
+
+All 302 assertions of the extended sheet+regression suites pass
+clean under ASan:
+
+```
+SheetPathLifetime                      73/73 assertions pass
+  PathSurvivesRefreshHierarchyCycle    5/5
+  StaleMapKeyAfterCacheClear           2/2
+  ClonePointerStableWithinSingleRefresh 3/3
+  OrderingStableAcrossRefresh          4/4   ← auditor C1 verified
+  PageNumberSurvivesRefresh            2/2   ← auditor I3 verified
+  ConnectionMapPathReadsSurviveRefresh 2/2   ← original UAF class
+  LastInstanceSplitsTemplateFromSlot   18/18
+  GetInstanceWalksThePath              37/37
+
+SchSheetInstance                       35/35 assertions pass
+SchematicSheetInstanceData             13/13 assertions pass
+SchSheet / SchSheetPath / SchSheetList 70/70 assertions pass
+RepeatedSheetHierarchy / *BusFanout    78/78 assertions pass
+Issue23403SharedSubsheetScreen         23/23 assertions pass
+                                       --------
+                                       302/302 assertions PASS
+```
+
+No ASan reports during execution.  The original CONNECTION_SUBGRAPH::
+m_sheet UAF (`SCH_SHEET::IsSynthetic()` from `resolveHierPinPushTarget`
+at `connection_graph.cpp:2914`) is structurally eliminated.
+
+## Remaining work (deferred)
+
+Each item below removes more potential UAFs but is not blocking for
+the original bug.  Listed in approximate priority order:
+
+- **PathHumanReadable** dereferences `m_sheets[i]->GetField(SHEET_NAME)`
+  to assemble human-readable path strings.  ~50 callers; mostly in
+  plot/log/text-var paths where the SCH_SHEET_PATH is fresh.
+  Migration would route through `SCHEMATIC::ResolveSheetTemplate` to
+  read the sheet name from a live template.
+
+- **`hierarchy_pane.cpp`** (~6 `.Last()->` callsites) — widget cache
+  of hierarchy paths.  Outlives `RefreshHierarchy()` so a stored
+  path with a synthetic-clone leaf can dangle on the next click.
+
+- **`SCH_REFERENCE::m_sheetPath`** (audit P5e) — symbol annotation
+  references; per-sheet-path scope.  Investigate whether reads
+  outlive a refresh.
+
+- **`SCH_PIN::m_net_name_map`** keyed by `SCH_SHEET_PATH` — already
+  KIID-safe at the map level (hash + `operator==` were KIID-based,
+  and `operator<` is now too as of P5c), but the read-after-find
+  pattern could still go through unsafe accessors.
+
+- **P6**: delete `m_sheets` entirely; require `SCHEMATIC` for any
+  `SCH_SHEET*` resolution.  Once consumer migrations are complete,
+  the bandwidth for unsafe pointer reads is gone by construction.
+
+- **P7**: delete the synthetic-clone mechanism (`m_repeatClones`,
+  `MintRepeatClone`, `ClearRepeatCloneCache`, `IsSynthetic`,
+  `GetTemplate`, `MarkSynthetic`).  `BuildSheetList` then constructs
+  `SCH_SHEET_INSTANCE` values directly without allocating any
+  throwaway SCH_SHEETs.
+
+- **P8**: revert the three prior proximate fixes (`66b0239127`,
+  `e7ecca48ac`, `35f1fa2a35`) whose workarounds are obviated by the
+  structural fix.  Audit klicad-python's `SheetPath(proto_ref=…)`
+  wrapper for value-vs-reference semantics.
 
 ## Wire format
 
