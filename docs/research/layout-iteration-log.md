@@ -127,3 +127,47 @@ Committed `_coord_assign` edit anyway because it's correct and will
 apply on any fresh emit; this iteration's lesson is about the
 verification mechanism, not the algorithm.
 
+
+## Iteration 3 — replace-mode + page-fill rescale, visible end-to-end (2026-05-29)
+
+Iteration 2 left the page-fill x-rescale in `_coord_assign` blocked by
+the `to_schematic(mode="diff")` default, which preserves existing
+part positions and skips the layout for already-placed refs.
+
+`_klicad_sch.py::to_schematic` already supports `mode="replace"` — it
+deletes every existing symbol/sheet before emitting and runs the
+layout engine for the entire circuit.  The public Circuit wrapper
+in `_circuit.py` was *not* passing the mode kwarg through, so callers
+had no way to opt in.  Added `mode: str = "diff"` to
+`Circuit.to_schematic` with full docstring covering the diff/replace
+trade-off (round-trip ergonomics vs. layout-iteration ergonomics).
+
+Re-ran `build_schematic.py` with `mode="replace"` (one-off in the
+driver-board tmp copy, since the file is durable user data per the
+project's contributor notes).
+
+Visual result: dramatic improvement.
+- Top-sheet symbols now distributed across the full page width
+  (5 columns + 1 channel-sheet column + 1 LOAD-label column instead
+  of the previous left-quarter cram).
+- The 8 V_GATE sources wrap to 2 sub-columns at sub-column-DX
+  separation (Sugiyama MAX_LAYER_HEIGHT=8 enforced).
+- 8 V_IOPIN sources behave similarly.
+- The RLOAD/LLOAD columns now sit in the right-middle of the page;
+  CH1..CH8 sheets between them in another column.
+- VPULSE Sim.Params still hidden (iteration 1 carries forward).
+- The right edge of the page no longer empty.
+
+Outputs:
+- `docs/research/layout-screenshots/iter3/driver8.png` (top sheet)
+- `docs/research/layout-screenshots/iter3/driver8-CH1.png` (channel)
+
+Remaining visible defects (next iterations):
+- CH1..CH8 sheets vertically overlap each other — sheet bounding-box
+  height not accounted for in vertical placement (Phase 3g).
+- Channel-sheet body still cramped in the upper-left quadrant
+  (replace-mode applies to top sheet; channel still uses diff
+  semantics through a different code path).
+- Several long net-name labels overlap symbol bodies — column-width
+  awareness would alleviate (Phase 2d-e).
+
