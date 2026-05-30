@@ -31,3 +31,51 @@ Channel-sheet observations:
   in one column with very small lateral separation, value labels touching
   the symbol body.
 
+
+## Iteration 1 — hide Sim.Params + bump hier-label column (2026-05-29)
+
+Two focused fixes targeting the top two visible defects in the baseline:
+
+**Change 1**: hide `Sim.Params` field on V/I source symbols
+(VPULSE/VSIN/etc.).  The default Value field already advertises the
+symbol type (VPULSE); the Sim.Params text only needs to exist in the
+file for the netlist exporter.  Implemented as a post-pass that
+appends `(hide yes)` to the field's `(effects ...)` block — the
+proper fix is extending `klicad_native_schematic_state.set_symbol_field`
+to take an optional `visible=False` kwarg (small C++ binding patch,
+deferred).  Post-pass script: `/tmp/auto-route-iter/hide_sim_params.py`.
+
+**Change 2**: shift channel-sheet hierarchical-label column down
+clear of the A4 frame's top border-marker row (~15mm).
+`_klicad_sch.py::_emit_port_anchors` now seeds new labels at
+y=8*_GRID (20.32mm) instead of 4*_GRID (10.16mm); a sibling post-pass
+(`/tmp/auto-route-iter/bump_hier_labels.py`) shifts existing labels
+down by 10.16mm on schematics generated before this change so the
+old artifacts can be re-rendered without regenerating.
+
+Top-sheet observations:
+- VPULSE PULSE-parameter strings GONE.  Adjacent column collisions
+  resolved.  Labels (`V_GATE1` through `V_GATE8`, `LOAD#_MID`) now
+  legible end-to-end.
+- Right two-thirds of the page still empty — addresses Phase 2/3 of
+  the original plan (column-width awareness + page-fill rescaling),
+  unchanged this iteration.
+- Channel sheets at bottom-left still overflow off the page edge —
+  unchanged, scoped to a follow-up iteration.
+
+Channel-sheet observations:
+- Hier-label column (GATE, IOPIN, VLOAD, PIN, PD_OPT) shifted from
+  y∈[10, 30] mm to y∈[20, 40] mm — now visually below the top
+  border-marker row.  Slight overlap with the "1" column marker
+  remains; second bump or relocation to x>=20mm would fully clear.
+- Body parts (DFW1, M1, RG*, RPD) still huddled in the upper-left
+  quadrant of the page.  Phase 2/3 layout work needed.
+
+Output:
+- `docs/research/layout-screenshots/iter1/driver8.png` (top sheet)
+- `docs/research/layout-screenshots/iter1/driver8-CH1.png` (channel)
+
+Net: two visible defects closed.  Top-sheet readability is the
+biggest gain — the schematic is now scannable at a glance.  Channel
+sheet improved at the top but the layout is unchanged below.
+

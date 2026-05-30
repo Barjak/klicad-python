@@ -842,7 +842,7 @@ def _emit_one_sheet(c: "Circuit",
 
     # Emit hier-label anchors for ports on a child sheet (one per port).
     if not is_root and c.is_subcircuit:
-        _emit_port_anchors(c, kicad, models_lib_path)
+        _emit_port_anchors(c, kicad, models_lib_path, placed=placed)
 
     # Labels / routing.
     if route:
@@ -1349,7 +1349,8 @@ def _add_sheet_pins(c: "Circuit", kicad,
     return added, removed
 
 
-def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple[int, int]:
+def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path,
+                       placed: dict[str, str] | None = None) -> tuple[int, int]:
     """Inside a child sheet, ensure one SCH_HIER_LABEL exists per port.
 
     Per-port-name diff against the existing hier-labels on the current
@@ -1420,14 +1421,30 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
         else:
             seen_in_target.add(name)
 
-    # Place missing anchors.
+    # Map port -> first body part-pin for stub wires.
+    placed = placed or {}
+    port_pin: dict[str, tuple[str, str]] = {}
+    for p in sc_def.parts:
+        if p.kind == "SUBCIRCUIT":
+            continue
+        kiid = placed.get(p.ref)
+        if not kiid:
+            continue
+        for spice_pin, net in p.connections.items():
+            if net in target_set and net not in port_pin:
+                port_pin[net] = (kiid, p.kicad_pin_map[spice_pin])
+
     added = 0
+    # KiCad's default A4-landscape schematic frame draws border markers
+    # ("1", "2", "A", "B", ...) inside the top ~15mm of the page; an
+    # anchor at y=4*_GRID (10.16mm) sits inside that band and visually
+    # clips the frame.  Start anchors at y=8*_GRID (20.32mm) so the
+    # first label is comfortably below the border-marker row.
     for i, port_name in enumerate(target_names):
         if port_name in existing_by_name and port_name in seen_in_target:
-            # Already present at user-positioned coords — leave alone.
             continue
         x = 4 * _GRID
-        y = 4 * _GRID + i * _SHEET_PIN_DY
+        y = 8 * _GRID + i * _SHEET_PIN_DY
         r = kicad.run_python(
             f"import klicad_native_schematic_state as ss\n"
             f"r = ss.add_label({x}, {y}, {port_name!r}, kind='hierarchical')\n"
@@ -1440,6 +1457,26 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
                 f"{r.exception_traceback}"
             )
         added += 1
+        anchor = port_pin.get(port_name)
+        if anchor is None:
+            continue
+        kiid, pin_num = anchor
+        pos_r = kicad.run_python(
+            f"import klicad_native_schematic_state as ss\n"
+            f"ss.get_symbol_pin_position({kiid!r}, {pin_num!r})"
+        )
+        if not pos_r.ok:
+            continue
+        try:
+            pos = ast.literal_eval(pos_r.result_repr)
+        except (ValueError, SyntaxError):
+            continue
+        if not pos.get("ok"):
+            continue
+        kicad.run_python(
+            f"import klicad_native_schematic_state as ss\n"
+            f"ss.add_wire({x}, {y}, {pos['x_mm']}, {pos['y_mm']})"
+        )
     return added, removed
 
 
