@@ -322,6 +322,23 @@ def _coord_assign(layered: list[list[str]]) -> dict[str, tuple[float, float]]:
             x_cursor += (sub_cols - 1) * SUBCOL_DX + LAYER_DX
         else:
             x_cursor += LAYER_DX
+    # Page-fill rescale: A4 landscape gives ~240mm of usable horizontal
+    # drawing area (297mm page width minus ~30mm margins and the title
+    # block on the right).  If our layout ended well short of that, the
+    # right side renders as dead space (baseline iter0: ~60% of the page
+    # wasted).  Rescale x-positions linearly so the rightmost column
+    # lands at target_x_max, keeping ORIGIN_X as the anchor and
+    # preserving relative spacing.  Skip rescale when the layout already
+    # exceeds the target (overflow is a separate problem — wrapping or
+    # multi-page).
+    target_x_max = ORIGIN_X + 200.0  # ≈ 230mm right edge from ORIGIN_X=30
+    current_x_max = max((x for x, _ in out.values()), default=ORIGIN_X)
+    span = current_x_max - ORIGIN_X
+    target_span = target_x_max - ORIGIN_X
+    if span > 0 and span < target_span:
+        scale = target_span / span
+        out = {ref: (ORIGIN_X + (x - ORIGIN_X) * scale, y)
+               for ref, (x, y) in out.items()}
     return out
 
 

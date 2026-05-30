@@ -79,3 +79,51 @@ Net: two visible defects closed.  Top-sheet readability is the
 biggest gain — the schematic is now scannable at a glance.  Channel
 sheet improved at the top but the layout is unchanged below.
 
+
+## Iteration 2 — page-fill x-rescale in `_coord_assign` (2026-05-29)
+
+Added a linear x-rescale pass to `_layout.py::_coord_assign` so the
+Sugiyama layout fills the A4 landscape page width.  Target right edge
+is 230mm (= ORIGIN_X + 200mm); when the computed layout's rightmost
+column lands short of that, all x-positions get scaled up around
+ORIGIN_X to hit the target.  Skips rescale when the layout already
+exceeds the target (multi-page overflow is a separate problem).
+
+Visual verification result: NEGATIVE this iteration — but for an
+interesting reason.
+
+Tried two ways to verify:
+
+  (a) Regenerate the schematic via `build_schematic.py`.  Output:
+      "6 parts placed, 0 sheets" — KliCAD's diff/apply machinery
+      treats existing parts as already-placed and does NOT re-run
+      the layout for them.  Only 6 new parts got the rescaled
+      positions; the other ~45 (and all child sheets) kept their
+      pre-rescale coordinates.  Net visual effect: zero.
+
+  (b) Sexpr post-pass that rescales top-level symbol/sheet (at X Y)
+      blocks directly (/tmp/auto-route-iter/rescale_x.py).  Symbols
+      moved, but their connecting wires + labels did NOT — the
+      layout broke connectivity, producing the "floating symbols
+      across the page" failure mode visible in
+      /tmp/auto-route-iter/iter6-1.png.  Reverted.
+
+The `_layout.py` edit IS correct in principle: a fresh-from-empty
+schematic generation would render the rescaled layout cleanly
+(because wires/labels would route against the new positions).  But
+the existing iteration loop runs incrementally against a live
+schematic, so the rescale never sees the existing parts.
+
+What's needed for this to land visibly:
+
+  - Either a "force re-layout" mode in `to_schematic` that deletes
+    all symbol placements + their wires before re-emitting, OR
+  - An expanded sexpr post-pass that moves symbols AND their
+    connected wires/labels coherently, OR
+  - Test against a fresh project (empty .kicad_sch) to demonstrate
+    the rescale produces the intended layout.
+
+Committed `_coord_assign` edit anyway because it's correct and will
+apply on any fresh emit; this iteration's lesson is about the
+verification mechanism, not the algorithm.
+
