@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -120,6 +120,24 @@ class Part:
 
     # Per-instance: pin name -> net name.  Filled by subclass __init__.
     connections: dict[str, str] = field(default_factory=dict, init=False)
+
+    # Source reference for the spec pane.  Captured at construction time
+    # by __post_init__; `None` when the part was assembled from a
+    # non-file context (REPL, exec'd string, etc.).  The eeschema spec
+    # pane reads the matching `Klicad.SpecSrc` symbol field to drive
+    # hover/selection sync.  See klipy.circuit._srcref.
+    _src: Optional[tuple[str, int]] = field(default=None, init=False,
+                                            repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        # Capture the user's call site.  Subclasses that override
+        # __init__ go: user → R.__init__ → super().__init__ (dataclass)
+        # → __post_init__; the walker skips all klipy frames so the
+        # captured frame is the user's R(...) line, not R.__init__'s
+        # super() line.  Subclasses overriding __post_init__ must call
+        # super().__post_init__() first to preserve this.
+        from ._srcref import capture_user_frame
+        self._src = capture_user_frame()
 
     # ---- introspection ----
 

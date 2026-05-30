@@ -828,7 +828,8 @@ def _emit_one_sheet(c: "Circuit",
                       for ref in keep_sheet_refs}
         positions = _layout_positions(c, engine=layout)
         sheet_kiids = _place_sheet_instances(c, kicad, sub_to_filename,
-                                              positions, sheet_skip)
+                                              positions, sheet_skip,
+                                              models_lib_path=models_lib_path)
         # Merge sheet kiids into `placed` so _label_pins's SUBCIRCUIT
         # branch can find them.
         placed.update(sheet_kiids)
@@ -985,6 +986,21 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
                 snippet += (
                     f"ss.set_symbol_field(kiid, 'Sim.Name', {p.model!r})\n"
                 )
+        # Spec-pane source reference.  When the user constructed this
+        # Part with a real file backing __file__, _src is (abs_path,
+        # lineno) captured by Part.__post_init__.  Emit project-relative
+        # so the schematic file stays portable (no leaked absolute paths
+        # — see klipy.circuit._srcref.to_relative_src).  Falls back to
+        # the enclosing Circuit's own _src for synthesized parts.
+        from ._srcref import to_relative_src
+        src_str = to_relative_src(p._src, models_lib_path.parent) \
+                  or to_relative_src(getattr(c, "_src", None),
+                                     models_lib_path.parent)
+        if src_str is not None:
+            snippet += (
+                f"ss.set_symbol_field(kiid, 'Klicad.SpecSrc', "
+                f"{src_str!r}, visible=False)\n"
+            )
         snippet += "kiid"
 
         r = kicad.run_python(snippet)
@@ -1190,7 +1206,10 @@ def _sheet_pin_layout(sc_def: "Circuit", sheet_x: float, sheet_y: float
 def _place_sheet_instances(c: "Circuit", kicad,
                             sub_to_filename: dict[int, Path],
                             positions: dict[str, tuple[float, float]],
-                            skip_refs: dict[str, str]) -> dict[str, str]:
+                            skip_refs: dict[str, str],
+                            *,
+                            models_lib_path: Path | None = None
+                            ) -> dict[str, str]:
     """Add SCH_SHEET items for every SubcircuitInstance in c.parts.
 
     Returns ref -> sheet kiid mapping (including skipped/kept refs so
@@ -1224,10 +1243,29 @@ def _place_sheet_instances(c: "Circuit", kicad,
             )
         else:
             extra_kwargs = ""
+        # Spec-pane source ref for the sheet symbol — see Part path
+        # for the same idea applied to SCH_SYMBOLs.
+        from ._srcref import to_relative_src
+        # `c` is the parent Circuit (where the .instance() call was
+        # authored).  Falls back to it because SubcircuitInstance Parts
+        # are constructed inside Circuit.instance() — the `p._src` on
+        # the instance points at instance(), not the user's add() line.
+        # Stamp the parent Circuit's _src instead so the spec-pane
+        # cursor lands on the construction site of `top` / sub-circuit.
+        proj_dir = models_lib_path.parent if models_lib_path else None
+        sheet_src = to_relative_src(p._src, proj_dir) \
+                    or to_relative_src(getattr(c, "_src", None), proj_dir)
+        sheet_field_emit = ""
+        if sheet_src is not None:
+            sheet_field_emit = (
+                f"ss.set_sheet_field(r['kiid'], 'Klicad.SpecSrc', "
+                f"{sheet_src!r}, visible=False)\n"
+            )
         snippet = (
             f"import klicad_native_schematic_state as ss\n"
             f"r = ss.add_sheet({p.ref!r}, {filename!r}, {x}, {y}, {w}, {h}{extra_kwargs})\n"
             f"if not r.get('ok'): raise RuntimeError(f'add_sheet failed for {p.ref}: ' + str(r))\n"
+            f"{sheet_field_emit}"
             f"r['kiid']"
         )
         r = kicad.run_python(snippet)
@@ -1440,6 +1478,20 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path,
     # anchor at y=4*_GRID (10.16mm) sits inside that band and visually
     # clips the frame.  Start anchors at y=8*_GRID (20.32mm) so the
     # first label is comfortably below the border-marker row.
+    # Spec-pane source ref for the hier-labels.  Use the Sub-Circuit
+    # definition's _src — its `ports=[...]` argument is where the port
+    # name was authored.  Each hier-label points back to the same line
+    # for now; future work could resolve to the specific port in the
+    # ports list.
+    from ._srcref import to_relative_src
+    proj_dir = models_lib_path.parent if models_lib_path else None
+    label_src = to_relative_src(getattr(sc_def, "_src", None), proj_dir)
+    label_field_emit = (
+        f"ss.set_label_field(r['kiid'], 'Klicad.SpecSrc', "
+        f"{label_src!r}, visible=False)\n"
+        if label_src is not None else ""
+    )
+
     for i, port_name in enumerate(target_names):
         if port_name in existing_by_name and port_name in seen_in_target:
             continue
@@ -1449,6 +1501,7 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path,
             f"import klicad_native_schematic_state as ss\n"
             f"r = ss.add_label({x}, {y}, {port_name!r}, kind='hierarchical')\n"
             f"if not r.get('ok'): raise RuntimeError('hier label failed: ' + str(r))\n"
+            f"{label_field_emit}"
             f"True"
         )
         if not r.ok:

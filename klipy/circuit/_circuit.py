@@ -141,8 +141,16 @@ class Circuit:
     # Populated by __post_init__ when ports is non-None.
     _port_decl:       list[str] = field(default_factory=list, init=False)
     _ports_expanded:  list[str] = field(default_factory=list, init=False)
+    # Source reference for the spec pane.  See klipy.circuit._srcref.
+    # Captured at construction; used as a fallback Klicad.SpecSrc for
+    # items synthesized by to_schematic (power symbols, port stubs,
+    # autorouted labels) that have no direct user line of their own.
+    _src: "tuple[str, int] | None" = field(default=None, init=False,
+                                           repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        from ._srcref import capture_user_frame
+        self._src = capture_user_frame()
         if self.ports is not None:
             from ._bus import expand_port_decl
             # validate + expand; validate_port_decl runs inside expand
