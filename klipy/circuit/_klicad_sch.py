@@ -260,18 +260,87 @@ def _power_positions(c: "Circuit") -> list[tuple[str, str, float, float]]:
 
 
 def _power_lib_id_for(name: str) -> str:
-    """Map a net name to a power-symbol lib_id."""
+    """Map a net name to a power-symbol lib_id from KiCad's `power` library.
+
+    Three-tier match:
+
+      1. Direct hit on a symbol that actually ships in `power.kicad_sym`.
+         Includes every common voltage rail KiCad has a dedicated
+         symbol for, plus the standard rail aliases.
+      2. Auto-derived hit for names matching the `+<digits>V` /
+         `+<digits>V<digits>` / `-<digits>V` shape KiCad's library
+         uses for arbitrary voltages (e.g. `+1V0`, `+24V`, `-15V`).
+      3. **Fallback for genuinely unknown names → `power:PWR_FLAG`.**
+         PWR_FLAG is the neutral "this net is an externally-driven
+         power rail" marker.  The caller is expected to attach a
+         wire-label carrying the actual net name so the net survives
+         to the netlist.  NEVER fall back to a specific voltage
+         symbol — that mis-labels the rail in the saved file (the
+         original bug: `+VLOAD` got `power:+5V`, which then claimed
+         the symbol's hidden +5V pin and broke connectivity).
+    """
+    import re
+
+    # Tier 1: exact / common alias table.  Case-preserving on lookup
+    # since KiCad symbol names are case-sensitive (`+5V` not `+5v`).
     table = {
-        "VCC":   "power:VCC",
-        "VDD":   "power:VDD",
-        "+5V":   "power:+5V",
-        "+3V3":  "power:+3V3",
-        "+3.3V": "power:+3V3",
-        "+12V":  "power:+12V",
-        "VBAT":  "power:VBAT",
-        "VBUS":  "power:VBUS",
+        # Generic VCC / VDD / Vss family
+        "VCC":     "power:VCC",
+        "VDD":     "power:VDD",
+        "VEE":     "power:VEE",
+        "VSS":     "power:VSS",
+        "VBAT":    "power:VBAT",
+        "VBUS":    "power:VBUS",
+        "VAA":     "power:VAA",
+        "VDDA":    "power:VDDA",
+        "VSSA":    "power:VSSA",
+        # Standard positive rails
+        "+5V":     "power:+5V",
+        "+3V3":    "power:+3V3",
+        "+3.3V":   "power:+3V3",
+        "+1V8":    "power:+1V8",
+        "+1.8V":   "power:+1V8",
+        "+1V2":    "power:+1V2",
+        "+1.2V":   "power:+1V2",
+        "+1V0":    "power:+1V0",
+        "+1.0V":   "power:+1V0",
+        "+2V5":    "power:+2V5",
+        "+2.5V":   "power:+2V5",
+        # Higher voltage positive rails
+        "+9V":     "power:+9V",
+        "+12V":    "power:+12V",
+        "+15V":    "power:+15V",
+        "+24V":    "power:+24V",
+        "+48V":    "power:+48V",
+        # Negative rails
+        "-5V":     "power:-5V",
+        "-12V":    "power:-12V",
+        "-15V":    "power:-15V",
+        "-24V":    "power:-24V",
+        # Grounds (caller routes ground via the kind="ground" path,
+        # but accept literal names here too)
+        "GND":     "power:GND",
+        "GNDA":    "power:GNDA",
+        "GNDD":    "power:GNDD",
+        "GNDREF":  "power:GNDREF",
+        "EARTH":   "power:Earth",
     }
-    return table.get(name.upper(), f"power:+5V")
+    if name in table:
+        return table[name]
+
+    # Tier 2: auto-derive for the `+\d+V` / `+\d+V\d+` / `-\d+V`
+    # voltage-symbol shape KiCad's library uses.  `+24V` was already
+    # in the table; this catches things like `+2V8`, `+36V`, `-28V`
+    # that we didn't hand-list but the library has.  Match KiCad's
+    # naming conventions, then trust the lib to exist.
+    if re.fullmatch(r'[+-]\d+V\d*', name):
+        return f"power:{name}"
+
+    # Tier 3: unknown rail → generic PWR_FLAG.  The caller must
+    # ensure a wire-label exists carrying `name` so the net is
+    # recoverable from the saved schematic.  See _power_positions
+    # for the placement convention.
+    return "power:PWR_FLAG"
 
 
 # ──────────────────────────────────────────────────────────────────────────

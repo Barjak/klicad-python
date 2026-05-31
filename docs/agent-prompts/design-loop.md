@@ -132,6 +132,13 @@ the symbol's `Sim.Library` field pointing at a project-local file.
 Output the schematic to `kicad/<project>.kicad_sch` plus the sibling
 project files.
 
+Name the emitter script `<project>.spec.py` (e.g. `driver8.spec.py`)
+and place it in the same directory as the `.kicad_sch`.  The eeschema
+spec pane auto-discovers files matching that pattern when first shown,
+falling back to `build_schematic.py` if `<basename>.spec.py` is absent.
+Either name works; pick the basename-prefixed form for projects that
+ship multiple specs (e.g. DUT + testbench).
+
 ### Phase 6 — ERC + smoke simulation
 
 Run ERC against the schematic via KliCAD's own ERC binding.  All

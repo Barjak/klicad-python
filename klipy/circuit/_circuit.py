@@ -566,11 +566,14 @@ class Circuit:
                  (opt-in; default is label-based connectivity).
         mode:    "diff" (default) keeps existing parts in place and only
                  emits new/changed ones — best for round-trip workflows
-                 where the user has hand-tuned positions.  "wipe" deletes
-                 every existing symbol/sheet before emit and re-runs the
-                 layout engine for the whole circuit — best for testing
-                 a layout-engine change end-to-end (the diff path skips
-                 already-placed parts so layout edits never propagate).
+                 where the user has hand-tuned positions.  "replace"
+                 deletes every existing symbol/sheet before emit and
+                 re-runs the layout engine for the whole circuit — best
+                 for testing a layout-engine change end-to-end (the diff
+                 path skips already-placed parts so layout edits never
+                 propagate).  "strict" refuses to emit if the live
+                 schematic has parts the circuit doesn't claim, instead
+                 of silently keeping them.
 
         Returns {ok, parts_placed, labels_placed, wires_placed, sch_path,
                  models_lib_path, project_path}.

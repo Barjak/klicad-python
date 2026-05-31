@@ -87,17 +87,107 @@ Instance-ability (Sub-Circuit only):
 
 ```python
 sub.is_subcircuit          # True iff ports= was passed
-sub.instance(ref, **port_map) -> SubcircuitInstance
+sub.instance(ref, *, repeat: int = 1, **port_map) -> SubcircuitInstance
                            # port_map keys may be scalar port names, base
                            #   names of bus ports, or full-range
                            #   ('DATA[0..7]') forms.  Values may be
                            #   scalar nets, bus ranges of matching width,
                            #   or individual bus members.
+                           # repeat=N produces ONE SCH_SHEET with N peer
+                           #   SCH_SHEET_INSTANCEs (see below).
 ```
 
 Validation runs at instance-time: missing ports, extra port-map
 keys, vector-width mismatches, scalar-to-bus and bus-to-scalar
 binding errors all raise.
+
+### Multi-channel: `repeat=N` with bus ports
+
+A SubcircuitInstance with `repeat=N` lowers to a *single* SCH_SHEET on
+the parent canvas plus N peer SCH_SHEET_INSTANCEs at depth 1 — the
+"complex hierarchy" idiom in KiCad terms.  All instances share one
+backing `<filename>.kicad_sch` (one screen, one library lookup, one
+edit affects all).  Per-instance identity lives in the SCH_SHEET_PATH
+slot KIID set on the parent.
+
+**The canonical shape: bus-shaped ports + base-name body refs.**  The
+sub-circuit declares each per-channel port as a bus of width N.  The
+body wires components to the *base* (un-indexed) name — KliCAD's C++
+matcher binds slot K's scalar subgraph for `GATE` to bit K of the
+parent's `GBUS[0..N-1]` bus at hier-pin connection time.  You write
+"the per-channel function" once.
+
+```python
+N = 8
+ch = Circuit("channel", ports=[f"GATE[0..{N-1}]",
+                               f"OUT[0..{N-1}]"])
+ch.add(R("R1", "GATE", "OUT", value="10k"))   # body refs base names
+# ↑ slot K sees GATE = GBUS[K], OUT = OBUS[K]
+
+top.add(ch.instance("U_CH",
+                    repeat=N,
+                    GATE=f"GBUS[0..{N-1}]",   # bus on both sides,
+                    OUT =f"OBUS[0..{N-1}]"))  # widths must match
+```
+
+**What's NOT supported.**  Scalar port + bus-net binding is rejected
+by the validator — the following raises
+`ValueError: port 'GATE' is scalar but bound to bus range 'GBUS[0..7]'`:
+
+```python
+ch = Circuit("channel", ports=["GATE", "OUT"])     # scalar ports
+top.add(ch.instance("U_CH", repeat=8,
+                    GATE="GBUS[0..7]", OUT="OBUS[0..7]"))   # ← rejected
+```
+
+If you want one rail shared across every slot, declare it scalar on
+both sides — those are the shared globals (power, common controls):
+
+```python
+# Mixed: bus ports for per-slot signals, scalar ports for shared rails.
+ch = Circuit("channel", ports=[f"GATE[0..{N-1}]",
+                               f"OUT[0..{N-1}]",
+                               "VCC", "GND"])
+top.add(ch.instance("U_CH", repeat=N,
+                    GATE=f"GBUS[0..{N-1}]",
+                    OUT =f"OBUS[0..{N-1}]",
+                    VCC ="+5V",       # scalar both sides → shared
+                    GND ="GND"))      # implicit-global also works
+```
+
+In practice the cleanest pattern is to keep power as implicit globals
+(GND, +5V, +VLOAD) and only port-list the per-channel signals — the
+implicit-global rule flows them through every slot without appearing
+in any port list (see "Implicit power nets" below).
+
+What this emits:
+- One `channel.kicad_sch` (template + screen)
+- One SCH_SHEET symbol on the parent
+- N SCH_SHEET_INSTANCE entries (slot 0..N-1) on the parent sheet
+- N per-slot SPICE X-lines via `to_spice_deck` (one per slot,
+  bus-bound port maps indexed by slot)
+- N component-instance refs per body part in the netlist
+
+Verify after emit:
+
+```python
+import klicad_native_hierarchy as h
+sheets = h.list_sheets()
+templates = {(s['file_name'], s['depth']) for s in sheets if s['depth'] > 0}
+# len(templates) == 1; len(sheets at depth 1) == N
+```
+
+ERC sees N peer hier-paths, not one.  SPICE sees N X-lines, not one.
+Footprint refs are per-slot (`U1:1`, `U1:2`, ..., `U1:N`).
+
+When *not* to use multi-channel: when slots differ structurally (not
+just per-slot net binding).  Then write N distinct
+`ch.instance("CH<k>", ...)` calls.  The `repeat=` form assumes
+slot-identical bodies — only the port nets vary.
+
+The canonical test is `tests/test_multi_channel_netlist.py`
+(`_build_multi_channel_circuit`); consult it if the validator pushes
+back on a pattern you expect to work.
 
 Validation (called automatically by emitters):
 

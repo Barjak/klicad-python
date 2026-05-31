@@ -75,7 +75,11 @@ def _default_socket_path() -> str:
             if os.path.exists(flatpak_socket_path):
                 return f'ipc://{flatpak_socket_path}'
 
-        return 'ipc:///tmp/klicad/api.sock'
+        # Match the C++ side, which builds the socket path from
+        # std::filesystem::temp_directory_path() — i.e. honors TMPDIR
+        # via gettempdir().  Hardcoding /tmp here breaks under any
+        # TMPDIR override (notably Claude Code's /tmp/claude-1000).
+        return f'ipc://{gettempdir()}/klicad/api.sock'
 
 def _random_client_name() -> str:
     return 'anonymous-'+''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
