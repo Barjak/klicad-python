@@ -260,18 +260,87 @@ def _power_positions(c: "Circuit") -> list[tuple[str, str, float, float]]:
 
 
 def _power_lib_id_for(name: str) -> str:
-    """Map a net name to a power-symbol lib_id."""
+    """Map a net name to a power-symbol lib_id from KiCad's `power` library.
+
+    Three-tier match:
+
+      1. Direct hit on a symbol that actually ships in `power.kicad_sym`.
+         Includes every common voltage rail KiCad has a dedicated
+         symbol for, plus the standard rail aliases.
+      2. Auto-derived hit for names matching the `+<digits>V` /
+         `+<digits>V<digits>` / `-<digits>V` shape KiCad's library
+         uses for arbitrary voltages (e.g. `+1V0`, `+24V`, `-15V`).
+      3. **Fallback for genuinely unknown names → `power:PWR_FLAG`.**
+         PWR_FLAG is the neutral "this net is an externally-driven
+         power rail" marker.  The caller is expected to attach a
+         wire-label carrying the actual net name so the net survives
+         to the netlist.  NEVER fall back to a specific voltage
+         symbol — that mis-labels the rail in the saved file (the
+         original bug: `+VLOAD` got `power:+5V`, which then claimed
+         the symbol's hidden +5V pin and broke connectivity).
+    """
+    import re
+
+    # Tier 1: exact / common alias table.  Case-preserving on lookup
+    # since KiCad symbol names are case-sensitive (`+5V` not `+5v`).
     table = {
-        "VCC":   "power:VCC",
-        "VDD":   "power:VDD",
-        "+5V":   "power:+5V",
-        "+3V3":  "power:+3V3",
-        "+3.3V": "power:+3V3",
-        "+12V":  "power:+12V",
-        "VBAT":  "power:VBAT",
-        "VBUS":  "power:VBUS",
+        # Generic VCC / VDD / Vss family
+        "VCC":     "power:VCC",
+        "VDD":     "power:VDD",
+        "VEE":     "power:VEE",
+        "VSS":     "power:VSS",
+        "VBAT":    "power:VBAT",
+        "VBUS":    "power:VBUS",
+        "VAA":     "power:VAA",
+        "VDDA":    "power:VDDA",
+        "VSSA":    "power:VSSA",
+        # Standard positive rails
+        "+5V":     "power:+5V",
+        "+3V3":    "power:+3V3",
+        "+3.3V":   "power:+3V3",
+        "+1V8":    "power:+1V8",
+        "+1.8V":   "power:+1V8",
+        "+1V2":    "power:+1V2",
+        "+1.2V":   "power:+1V2",
+        "+1V0":    "power:+1V0",
+        "+1.0V":   "power:+1V0",
+        "+2V5":    "power:+2V5",
+        "+2.5V":   "power:+2V5",
+        # Higher voltage positive rails
+        "+9V":     "power:+9V",
+        "+12V":    "power:+12V",
+        "+15V":    "power:+15V",
+        "+24V":    "power:+24V",
+        "+48V":    "power:+48V",
+        # Negative rails
+        "-5V":     "power:-5V",
+        "-12V":    "power:-12V",
+        "-15V":    "power:-15V",
+        "-24V":    "power:-24V",
+        # Grounds (caller routes ground via the kind="ground" path,
+        # but accept literal names here too)
+        "GND":     "power:GND",
+        "GNDA":    "power:GNDA",
+        "GNDD":    "power:GNDD",
+        "GNDREF":  "power:GNDREF",
+        "EARTH":   "power:Earth",
     }
-    return table.get(name.upper(), f"power:+5V")
+    if name in table:
+        return table[name]
+
+    # Tier 2: auto-derive for the `+\d+V` / `+\d+V\d+` / `-\d+V`
+    # voltage-symbol shape KiCad's library uses.  `+24V` was already
+    # in the table; this catches things like `+2V8`, `+36V`, `-28V`
+    # that we didn't hand-list but the library has.  Match KiCad's
+    # naming conventions, then trust the lib to exist.
+    if re.fullmatch(r'[+-]\d+V\d*', name):
+        return f"power:{name}"
+
+    # Tier 3: unknown rail → generic PWR_FLAG.  The caller must
+    # ensure a wire-label exists carrying `name` so the net is
+    # recoverable from the saved schematic.  See _power_positions
+    # for the placement convention.
+    return "power:PWR_FLAG"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -699,12 +768,14 @@ def _emit_one_sheet(c: "Circuit",
             for row in ast.literal_eval(r.result_repr):
                 if int(row.get("depth", 0)) != 1:
                     continue
-                # R5.6: skip BuildSheetList's synthetic clones — multi-channel
-                # sheets expand into N hierarchy paths sharing the same name,
-                # but only the on-canvas template's KIID is addressable for
-                # downstream binding calls (add_sheet_pin, delete_by_kiid).
-                if row.get("is_synthetic"):
-                    continue
+                # KliCAD P7: multi-channel sheets still expand into N
+                # hierarchy paths sharing the same name, but every path's
+                # leaf SCH_SHEET is the on-canvas template (no synthetic
+                # clones), so all N rows carry the template's KIID.  The
+                # dict-by-name assignment below naturally dedupes the N
+                # rows to one — the entry's uuid is the template, which
+                # is what downstream binding calls (add_sheet_pin,
+                # delete_by_kiid) need.
                 existing_sheets_by_ref[row["name"]] = row
 
     # Target sets — scalar parts vs sheet instances.
@@ -826,7 +897,8 @@ def _emit_one_sheet(c: "Circuit",
                       for ref in keep_sheet_refs}
         positions = _layout_positions(c, engine=layout)
         sheet_kiids = _place_sheet_instances(c, kicad, sub_to_filename,
-                                              positions, sheet_skip)
+                                              positions, sheet_skip,
+                                              models_lib_path=models_lib_path)
         # Merge sheet kiids into `placed` so _label_pins's SUBCIRCUIT
         # branch can find them.
         placed.update(sheet_kiids)
@@ -840,7 +912,7 @@ def _emit_one_sheet(c: "Circuit",
 
     # Emit hier-label anchors for ports on a child sheet (one per port).
     if not is_root and c.is_subcircuit:
-        _emit_port_anchors(c, kicad, models_lib_path)
+        _emit_port_anchors(c, kicad, models_lib_path, placed=placed)
 
     # Labels / routing.
     if route:
@@ -983,6 +1055,21 @@ def _place_parts(c: "Circuit", kicad, models_lib_path: Path,
                 snippet += (
                     f"ss.set_symbol_field(kiid, 'Sim.Name', {p.model!r})\n"
                 )
+        # Spec-pane source reference.  When the user constructed this
+        # Part with a real file backing __file__, _src is (abs_path,
+        # lineno) captured by Part.__post_init__.  Emit project-relative
+        # so the schematic file stays portable (no leaked absolute paths
+        # — see klipy.circuit._srcref.to_relative_src).  Falls back to
+        # the enclosing Circuit's own _src for synthesized parts.
+        from ._srcref import to_relative_src
+        src_str = to_relative_src(p._src, models_lib_path.parent) \
+                  or to_relative_src(getattr(c, "_src", None),
+                                     models_lib_path.parent)
+        if src_str is not None:
+            snippet += (
+                f"ss.set_symbol_field(kiid, 'Klicad.SpecSrc', "
+                f"{src_str!r}, visible=False)\n"
+            )
         snippet += "kiid"
 
         r = kicad.run_python(snippet)
@@ -1188,7 +1275,10 @@ def _sheet_pin_layout(sc_def: "Circuit", sheet_x: float, sheet_y: float
 def _place_sheet_instances(c: "Circuit", kicad,
                             sub_to_filename: dict[int, Path],
                             positions: dict[str, tuple[float, float]],
-                            skip_refs: dict[str, str]) -> dict[str, str]:
+                            skip_refs: dict[str, str],
+                            *,
+                            models_lib_path: Path | None = None
+                            ) -> dict[str, str]:
     """Add SCH_SHEET items for every SubcircuitInstance in c.parts.
 
     Returns ref -> sheet kiid mapping (including skipped/kept refs so
@@ -1222,10 +1312,29 @@ def _place_sheet_instances(c: "Circuit", kicad,
             )
         else:
             extra_kwargs = ""
+        # Spec-pane source ref for the sheet symbol — see Part path
+        # for the same idea applied to SCH_SYMBOLs.
+        from ._srcref import to_relative_src
+        # `c` is the parent Circuit (where the .instance() call was
+        # authored).  Falls back to it because SubcircuitInstance Parts
+        # are constructed inside Circuit.instance() — the `p._src` on
+        # the instance points at instance(), not the user's add() line.
+        # Stamp the parent Circuit's _src instead so the spec-pane
+        # cursor lands on the construction site of `top` / sub-circuit.
+        proj_dir = models_lib_path.parent if models_lib_path else None
+        sheet_src = to_relative_src(p._src, proj_dir) \
+                    or to_relative_src(getattr(c, "_src", None), proj_dir)
+        sheet_field_emit = ""
+        if sheet_src is not None:
+            sheet_field_emit = (
+                f"ss.set_sheet_field(r['kiid'], 'Klicad.SpecSrc', "
+                f"{sheet_src!r}, visible=False)\n"
+            )
         snippet = (
             f"import klicad_native_schematic_state as ss\n"
             f"r = ss.add_sheet({p.ref!r}, {filename!r}, {x}, {y}, {w}, {h}{extra_kwargs})\n"
             f"if not r.get('ok'): raise RuntimeError(f'add_sheet failed for {p.ref}: ' + str(r))\n"
+            f"{sheet_field_emit}"
             f"r['kiid']"
         )
         r = kicad.run_python(snippet)
@@ -1347,7 +1456,8 @@ def _add_sheet_pins(c: "Circuit", kicad,
     return added, removed
 
 
-def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple[int, int]:
+def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path,
+                       placed: dict[str, str] | None = None) -> tuple[int, int]:
     """Inside a child sheet, ensure one SCH_HIER_LABEL exists per port.
 
     Per-port-name diff against the existing hier-labels on the current
@@ -1418,18 +1528,49 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
         else:
             seen_in_target.add(name)
 
-    # Place missing anchors.
+    # Map port -> first body part-pin for stub wires.
+    placed = placed or {}
+    port_pin: dict[str, tuple[str, str]] = {}
+    for p in sc_def.parts:
+        if p.kind == "SUBCIRCUIT":
+            continue
+        kiid = placed.get(p.ref)
+        if not kiid:
+            continue
+        for spice_pin, net in p.connections.items():
+            if net in target_set and net not in port_pin:
+                port_pin[net] = (kiid, p.kicad_pin_map[spice_pin])
+
     added = 0
+    # KiCad's default A4-landscape schematic frame draws border markers
+    # ("1", "2", "A", "B", ...) inside the top ~15mm of the page; an
+    # anchor at y=4*_GRID (10.16mm) sits inside that band and visually
+    # clips the frame.  Start anchors at y=8*_GRID (20.32mm) so the
+    # first label is comfortably below the border-marker row.
+    # Spec-pane source ref for the hier-labels.  Use the Sub-Circuit
+    # definition's _src — its `ports=[...]` argument is where the port
+    # name was authored.  Each hier-label points back to the same line
+    # for now; future work could resolve to the specific port in the
+    # ports list.
+    from ._srcref import to_relative_src
+    proj_dir = models_lib_path.parent if models_lib_path else None
+    label_src = to_relative_src(getattr(sc_def, "_src", None), proj_dir)
+    label_field_emit = (
+        f"ss.set_label_field(r['kiid'], 'Klicad.SpecSrc', "
+        f"{label_src!r}, visible=False)\n"
+        if label_src is not None else ""
+    )
+
     for i, port_name in enumerate(target_names):
         if port_name in existing_by_name and port_name in seen_in_target:
-            # Already present at user-positioned coords — leave alone.
             continue
         x = 4 * _GRID
-        y = 4 * _GRID + i * _SHEET_PIN_DY
+        y = 8 * _GRID + i * _SHEET_PIN_DY
         r = kicad.run_python(
             f"import klicad_native_schematic_state as ss\n"
             f"r = ss.add_label({x}, {y}, {port_name!r}, kind='hierarchical')\n"
             f"if not r.get('ok'): raise RuntimeError('hier label failed: ' + str(r))\n"
+            f"{label_field_emit}"
             f"True"
         )
         if not r.ok:
@@ -1438,6 +1579,26 @@ def _emit_port_anchors(sc_def: "Circuit", kicad, models_lib_path: Path) -> tuple
                 f"{r.exception_traceback}"
             )
         added += 1
+        anchor = port_pin.get(port_name)
+        if anchor is None:
+            continue
+        kiid, pin_num = anchor
+        pos_r = kicad.run_python(
+            f"import klicad_native_schematic_state as ss\n"
+            f"ss.get_symbol_pin_position({kiid!r}, {pin_num!r})"
+        )
+        if not pos_r.ok:
+            continue
+        try:
+            pos = ast.literal_eval(pos_r.result_repr)
+        except (ValueError, SyntaxError):
+            continue
+        if not pos.get("ok"):
+            continue
+        kicad.run_python(
+            f"import klicad_native_schematic_state as ss\n"
+            f"ss.add_wire({x}, {y}, {pos['x_mm']}, {pos['y_mm']})"
+        )
     return added, removed
 
 

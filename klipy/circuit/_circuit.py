@@ -141,8 +141,16 @@ class Circuit:
     # Populated by __post_init__ when ports is non-None.
     _port_decl:       list[str] = field(default_factory=list, init=False)
     _ports_expanded:  list[str] = field(default_factory=list, init=False)
+    # Source reference for the spec pane.  See klipy.circuit._srcref.
+    # Captured at construction; used as a fallback Klicad.SpecSrc for
+    # items synthesized by to_schematic (power symbols, port stubs,
+    # autorouted labels) that have no direct user line of their own.
+    _src: "tuple[str, int] | None" = field(default=None, init=False,
+                                           repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        from ._srcref import capture_user_frame
+        self._src = capture_user_frame()
         if self.ports is not None:
             from ._bus import expand_port_decl
             # validate + expand; validate_port_decl runs inside expand
@@ -540,7 +548,8 @@ class Circuit:
 
     def to_schematic(self, path: str | Path, *, kicad=None,
                      layout: str = "sugiyama",
-                     route: bool = False) -> dict:
+                     route: bool = False,
+                     mode: str = "diff") -> dict:
         """Author this Circuit into a live KliCAD schematic.
 
         path:    .kicad_sch file path.  Sibling .kicad_pro / sym-lib-table /
@@ -555,12 +564,23 @@ class Circuit:
                  multiple weakly-connected functional sub-blocks.
         route:   if True, draw explicit A* wires between same-net pins
                  (opt-in; default is label-based connectivity).
+        mode:    "diff" (default) keeps existing parts in place and only
+                 emits new/changed ones — best for round-trip workflows
+                 where the user has hand-tuned positions.  "replace"
+                 deletes every existing symbol/sheet before emit and
+                 re-runs the layout engine for the whole circuit — best
+                 for testing a layout-engine change end-to-end (the diff
+                 path skips already-placed parts so layout edits never
+                 propagate).  "strict" refuses to emit if the live
+                 schematic has parts the circuit doesn't claim, instead
+                 of silently keeping them.
 
         Returns {ok, parts_placed, labels_placed, wires_placed, sch_path,
                  models_lib_path, project_path}.
         """
         from ._klicad_sch import to_schematic
-        return to_schematic(self, path, kicad=kicad, layout=layout, route=route)
+        return to_schematic(self, path, kicad=kicad, layout=layout,
+                            route=route, mode=mode)
         """Generate a .kicad_sch file via the live KliCAD bindings.
 
         Requires a running KliCAD instance (creates / uses one via klipy.klicad.KliCAD).
@@ -575,8 +595,11 @@ class Circuit:
         Delegates to the existing kicad-cli wrapper in
         klipy.circuit._netlist.  For multi-channel SubcircuitInstances
         (repeat_count > 1), KliCAD's C++ netlist exporter handles the
-        fan-out automatically via the synthetic-clone hierarchy that
-        R2 + R5.4 produce.
+        fan-out automatically: BuildSheetList materializes N
+        SCH_SHEET_PATHs whose trailing SCH_SHEET_INSTANCEs carry
+        distinct slot_kiids drawn from the template's
+        m_repeatInstances, and the exporter walks each path producing
+        one component instance per slot.
         """
         from ._netlist import to_netlist as _to_netlist
         return _to_netlist(self, schematic_dir=schematic_dir)
