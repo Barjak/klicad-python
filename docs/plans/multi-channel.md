@@ -4,7 +4,7 @@ Status: **R0–C.7 LANDED on `loop/integration-7`; implementation diverged
 from this spec on the body's "scalar net" interpretation.**
 
 > ⚠ **Read before implementing**:
-> `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`
+> `docs/research/multi-channel-vectorization-discussion.md`
 > records a shape-preservation finding against R5.6/R5.7 + R3.3: the
 > spec calls (correctly) for a **vectorized** body with one scalar
 > hier-port per declared bus, but the implementation lowered into a

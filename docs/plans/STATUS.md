@@ -83,7 +83,7 @@ load-bearing for every netlist downstream of multi-channel.
   bracketed `GATE[0]`).  **Flagged for shape-preservation review:**
   the emit lowers a vectorized DSL input into a hand-unrolled body
   shape.  See
-  `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`.
+  `docs/research/multi-channel-vectorization-discussion.md`.
 - **`4bc7548` / `961a619`** (klicad-python) — A.11 live test for the
   multi-channel netlist round-trip; transitioned from
   `xfail(strict=True)` to 5/5 strict pass once R3.3 landed.
@@ -123,7 +123,7 @@ the multi-channel shape-preservation finding fixable (see above).
 - **Vectorization shape-preservation discussion** — user opened the
   multi-channel artifact, identified that R5.6/R5.7 lower the
   vectorized DSL into a hand-unrolled body.  Discussion preserved in
-  `~/projects/loop-state/audit-context/multi-channel-vectorization-discussion.md`.
+  `docs/research/multi-channel-vectorization-discussion.md`.
   Caused two upstream changes:
   (a) auditor spec gained a mandatory shape-preservation check (in
       `~/projects/loop-state/loop-chunks.md` and
