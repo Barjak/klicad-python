@@ -400,6 +400,55 @@ class SubcircuitDef:
         # Resolve nets, build the legacy Circuit, return it.
         return _flush(ctx)
 
+    def multi(self, ref: str, n: int, **port_map):
+        """Instantiate as an N-channel sheet (one SCH_SHEET, N peer
+        SCH_SHEET_INSTANCEs).  Port mappings whose RHS contains a
+        ``[1..n]`` bus literal are treated as bus ports of width n;
+        scalar mappings are shared across all N slots.
+
+        Returns the SubcircuitInstance Part — add it to a Circuit::
+
+            top.add(channel.multi('CH', 8,
+                                  gate='GATE[1..8]', vload='VLOAD'))
+
+        .. warning::
+
+           **v0.1 stopgap — slated for replacement in v0.2.**  The
+           ``'GATE[1..n]'`` string-literal syntax for indicating bus
+           ports is detected by checking ``'[' in rhs`` (see body).
+           This is a string-typing escape hatch standing in for a
+           proper ``Bus(n)``/``Vector`` net handle.  Do NOT build new
+           call sites that depend on this string syntax — when v0.2
+           lands a typed bus handle, this entire ``multi()`` method
+           will be replaced by passing bus handles directly, and
+           string-shaped port maps will stop working.
+
+           Cross-ref task #147 (mark stopgap), #142 (was Atopile —
+           deleted; replacement is the unbuilt v0.2 bus-typing work).
+        """
+        from ._bus import expand_port_decl
+
+        port_decl = []
+        for pn in self.port_names:
+            if pn not in port_map:
+                raise TypeError(
+                    f"{self.name}.multi: missing port binding for {pn!r}"
+                )
+            rhs = str(port_map[pn])
+            port_decl.append(f"{pn.upper()}[1..{n}]" if '[' in rhs else pn.upper())
+
+        # Build the underlying SubcircuitDef once with scalar Net handles
+        # so the body executes against single-slot ports; the multi-channel
+        # repeat=n expansion happens at sheet-instance placement time.
+        scalar_nets = {pn: Net(pn.upper()) for pn in self.port_names}
+        cir = self(**scalar_nets)
+        cir.name = self.name
+        cir.ports = port_decl
+        cir._port_decl = list(port_decl)
+        cir._ports_expanded = expand_port_decl(port_decl)
+        return cir.instance(ref, repeat=n,
+                            **{pn.upper(): port_map[pn] for pn in self.port_names})
+
 
 def subcircuit(func: Callable) -> SubcircuitDef:
     """Decorator: turn a function into a re-instantiable sub-circuit
@@ -582,6 +631,9 @@ def instance_array(
 
 __all__ = [
     "subcircuit",
+    "root",
+    "Bundle",
+    "Power",
     "Net",
     "Pin",
     "connect",
@@ -591,3 +643,230 @@ __all__ = [
     "R", "C", "L", "D", "NMOS", "V",
     "NMOS_2N7002", "D_1N4148",
 ]
+
+
+# ────────────────────────────────────────────────────────────────────
+# @root — pure-declaration entry point.  Removes main()/IPC/paths from
+# the spec file; the decorator does the work the user's main() used to.
+# ────────────────────────────────────────────────────────────────────
+
+
+def root(func: Callable) -> Callable:
+    """Mark the function as the spec entry point.
+
+    Side-effect-on-decoration semantics: when the module is exec'd
+    *as `__main__`* (by the spec pane subprocess, by `python3 spec.py`,
+    by Jupyter's top-level), this decorator:
+
+      1. Discovers the project's `.kicad_pro` / `.kicad_sch` from
+         env vars set by the spec pane (KLICAD_SCH_PATH) or by
+         scanning sibling directories.
+      2. Builds a fresh circuit by calling `func()`.
+      3. Connects to KliCAD via the default IPC socket (or
+         KLICAD_API_SOCKET) and emits via `to_schematic(mode='replace')`.
+
+    When the module is `import`ed (not run), the decorator is a no-op
+    so the spec is reusable as a library / fixture.
+
+    The user's spec file becomes pure: imports + @subcircuit + @root
+    + circuit body.  Everything else lives here.
+    """
+    import os
+    import inspect as _inspect
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    # No-op when imported as a library.  Fire only when the spec
+    # module is __main__ (spec pane subprocess invocation, direct
+    # `python3 spec.py`, Jupyter top-level cell).
+    caller_module = _inspect.getmodule(_inspect.stack()[1].frame)
+    is_main = caller_module is None or caller_module.__name__ == '__main__' \
+              or os.environ.get('KLIPY_FORCE_ROOT') == '1'
+    if not is_main:
+        return func
+
+    # Discover the schematic path.
+    sch_env = os.environ.get('KLICAD_SCH_PATH')
+    if sch_env:
+        sch_path = _Path(sch_env)
+    else:
+        spec_path = _Path(_inspect.getfile(func)).resolve()
+        spec_dir = spec_path.parent
+        candidates = list(spec_dir.glob('*.kicad_sch')) + \
+                     list((spec_dir / 'kicad').glob('*.kicad_sch'))
+        if not candidates:
+            raise RuntimeError(
+                f"@root: no .kicad_sch found near {spec_path}; "
+                f"set KLICAD_SCH_PATH or place a project sibling to the spec."
+            )
+        sch_path = candidates[0]
+
+    # Build the circuit by running the function in a build context.
+    ctx = _BuildContext(name=func.__name__, parts=[], connections=[],
+                        port_nets={})
+    token = _current.set(ctx)
+    try:
+        result = func()
+    finally:
+        _current.reset(token)
+
+    # If the function returned a legacy Circuit (built via top-level
+    # `Circuit(...)` calls), use that.  Otherwise lower the ctx.
+    if isinstance(result, LegacyCircuit):
+        cir = result
+    elif ctx.parts:
+        cir = _flush(ctx)
+        cir.name = func.__name__
+    else:
+        raise RuntimeError(
+            f"@root: {func.__name__}() didn't build any parts or return a Circuit."
+        )
+
+    # Emit.
+    from klipy import KliCAD
+    k = KliCAD(timeout_ms=300_000)
+    if not k.is_alive():
+        raise RuntimeError("@root: KliCAD IPC not reachable")
+
+    # Pop the current sheet stack back to the root before emit.  KliCAD's
+    # in-memory frame may have been left pushed into a child sheet by a
+    # previous interactive session; to_schematic needs to start at root.
+    k.run_python(
+        'import klicad_native_hierarchy as h\n'
+        'while True:\n'
+        '    sheets = h.list_sheets()\n'
+        '    if not sheets or sheets[0].get("depth", 0) == 0:\n'
+        '        break\n'
+        '    h.pop_sheet()\n'
+    )
+
+    cir.to_schematic(sch_path, kicad=k, mode='replace')
+
+    return func
+
+
+# ────────────────────────────────────────────────────────────────────
+# Bundles — multi-net types that wire-by-bundle, with bridge inference
+# ────────────────────────────────────────────────────────────────────
+
+
+class Bundle:
+    """Base class for multi-net interface types.
+
+    Subclasses declare fields via class annotations:
+
+        class Power(Bundle):
+            vcc: Net
+            gnd: Net
+
+        class USB(Bundle):
+            dp: Net
+            dn: Net
+            vbus: Net
+            gnd: Net
+
+    A bundle holds one Net per declared field.  Wiring `a >> b` where
+    both are the same Bundle type unifies field-by-field.  Bridge
+    inference (`bundle >> part >> bundle`) finds the matching bundle
+    field on `part` whose type equals the LHS bundle's type, wires it,
+    and returns the matching *output* bundle on `part` (the one named
+    with `_out` suffix, or the other declared bundle of the same type).
+    """
+
+    # Subclasses populate this in __init_subclass__ with declared
+    # field names → field types.
+    _fields: dict[str, type] = {}
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Collect class annotations into _fields.
+        cls._fields = {}
+        for klass in reversed(cls.__mro__):
+            anns = getattr(klass, '__annotations__', {})
+            for name, typ in anns.items():
+                if name.startswith('_'):
+                    continue
+                cls._fields[name] = typ
+
+    def __init__(self, **field_values):
+        # Each declared field becomes a Net on this instance.  If the
+        # caller provides a Net, use it; otherwise mint a fresh one.
+        for fname, ftype in self._fields.items():
+            if fname in field_values:
+                val = field_values[fname]
+                if not isinstance(val, Net):
+                    raise TypeError(
+                        f"{type(self).__name__}({fname}=…): expected Net, "
+                        f"got {type(val).__name__}"
+                    )
+                setattr(self, fname, val)
+            else:
+                setattr(self, fname, Net())
+
+    def __rshift__(self, other):
+        return _bundle_chain(self, other)
+
+    def __rrshift__(self, other):
+        return _bundle_chain(other, self)
+
+
+class Power(Bundle):
+    """Power rail: vcc + gnd."""
+    vcc: Net
+    gnd: Net
+
+
+def _bundle_chain(left, right):
+    """Implement `>>` for Bundle operands.
+
+    Cases:
+      bundle  >> bundle  (same type) → unify field-by-field
+      bundle  >> part                → bridge inference: find the part's
+                                       bundle field of the LHS's type and
+                                       declared as an input; connect; return
+                                       the matching output bundle.
+      bundle  >> (Pin | Net)         → not currently supported; raise
+    """
+    if isinstance(left, Bundle) and isinstance(right, Bundle):
+        if type(left) is not type(right):
+            raise TypeError(
+                f"can't bridge {type(left).__name__} -> {type(right).__name__}; "
+                f"bundle types must match for direct connect."
+            )
+        for fname in left._fields:
+            connect(getattr(left, fname), getattr(right, fname))
+        return right
+
+    if isinstance(left, Bundle) and isinstance(right, PartV01):
+        # Bridge inference: find an "input"-side bundle on `right` of
+        # matching type; wire LHS into it; return the matching output
+        # bundle.  Convention: any bundle attribute whose name ends in
+        # `_in` is input; `_out` is output; bare bundle name is bare.
+        bundle_type = type(left)
+        in_field = None
+        out_field = None
+        for attr in dir(right):
+            try:
+                val = getattr(right, attr)
+            except AttributeError:
+                continue
+            if isinstance(val, Bundle) and type(val) is bundle_type:
+                if attr.endswith('_in'):
+                    in_field = (attr, val)
+                elif attr.endswith('_out'):
+                    out_field = (attr, val)
+        if in_field is None:
+            raise TypeError(
+                f"bridge `bundle >> {type(right).__name__}` failed: no "
+                f"{bundle_type.__name__} _in field on {type(right).__name__}"
+            )
+        # Connect LHS bundle into the part's in-bundle.
+        for fname in bundle_type._fields:
+            connect(getattr(left, fname), getattr(in_field[1], fname))
+        # Return the matching out-bundle if present, else just the part
+        # for additional chaining.
+        return out_field[1] if out_field else right
+
+    raise TypeError(
+        f"can't chain {type(left).__name__} >> {type(right).__name__}"
+    )
