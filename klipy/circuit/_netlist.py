@@ -30,7 +30,7 @@ def _find_kicad_cli() -> str:
 def netlist_from_sch(sch_path: str | Path) -> str:
     """Run `kicad-cli sch export netlist` on an already-written .kicad_sch.
 
-    Used by callers (e.g. ``to_schematic``'s C.6 ratsnest hook) that
+    Used by callers (e.g. legacy ratsnest hooks; F-S3 stubbed) that
     already have a schematic on disk and want the netlist text without
     re-running schematic emission.
     """
@@ -59,7 +59,7 @@ def to_netlist(circuit, schematic_dir: str | Path | None = None) -> str:
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         sch = out_dir / f"{circuit.name or 'circuit'}.kicad_sch"
-        circuit.to_schematic(str(sch))
+        circuit.compose(str(sch))
         return netlist_from_sch(sch)
     finally:
         if ctx is not None:

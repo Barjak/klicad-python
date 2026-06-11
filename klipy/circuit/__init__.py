@@ -6,7 +6,7 @@ The Python object itself is the source of truth.  Two derived artifacts get
 generated from it:
 
   * a SPICE netlist (.to_spice_deck()) for direct simulation via ngspice
-  * a KliCAD schematic (.to_schematic()) for visual review + GUI Play button
+  * a KliCAD schematic (.compose()) for visual review + GUI Play button
 
 Both views are derived from the same source, so there is no schematic/SPICE
 divergence by construction.
@@ -37,7 +37,7 @@ Example:
     deck = c.to_spice_deck()
 
     # Or generate the visual schematic for the GUI:
-    c.to_schematic("/tmp/led-osc.kicad_sch")
+    c.compose("/tmp/led-osc.kicad_sch")
 """
 
 from pathlib import Path
@@ -60,7 +60,7 @@ from ._analyses import (
     Control,
     ALL_ANALYSES,
 )
-from ._klicad_sch import write_project_shell
+from ._compose import write_project_shell
 
 # Absolute path to the bundled SPICE model starter library.  Pass to
 # Circuit.add_model_lib(STANDARD_MODEL_LIB).

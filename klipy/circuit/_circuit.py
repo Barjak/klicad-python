@@ -546,48 +546,27 @@ class Circuit:
         from ._sim import run_tran
         return run_tran(self, step=step, stop=stop, uic=uic, ng=ng)
 
-    def to_schematic(self, path: str | Path, *, kicad=None,
-                     layout: str = "sugiyama",
-                     route: bool = False,
-                     mode: str = "diff") -> dict:
-        """Author this Circuit into a live KliCAD schematic.
+    def compose(self, path: str | Path, *, kicad=None,
+                mode: str = "replace") -> dict:
+        """GOAL.md F-S3 — single-IPC compose entry.
 
-        path:    .kicad_sch file path.  Sibling .kicad_pro / sym-lib-table /
-                 models.lib get auto-created if absent.
-        kicad:   optional klipy.KliCAD instance (a new one is created if None).
-        layout:  placement engine.  "sugiyama" (default) lays parts out in
-                 columns by signal-flow depth.  "clustered" reuses Sugiyama
-                 but with partition() block-id as a secondary ordering key
-                 so same-block parts end up adjacent.  "spring" runs
-                 force-directed Fruchterman-Reingold (via networkx) with
-                 phantom intra-block springs — best for circuits with
-                 multiple weakly-connected functional sub-blocks.
-        route:   if True, draw explicit A* wires between same-net pins
-                 (opt-in; default is label-based connectivity).
-        mode:    "diff" (default) keeps existing parts in place and only
-                 emits new/changed ones — best for round-trip workflows
-                 where the user has hand-tuned positions.  "replace"
-                 deletes every existing symbol/sheet before emit and
-                 re-runs the layout engine for the whole circuit — best
-                 for testing a layout-engine change end-to-end (the diff
-                 path skips already-placed parts so layout edits never
-                 propagate).  "strict" refuses to emit if the live
-                 schematic has parts the circuit doesn't claim, instead
-                 of silently keeping them.
+        Replaces the legacy ``to_schematic + relayout_via_ogdf`` two-call
+        flow.  Builds a typed SchematicProgram from this Circuit and
+        ships it in one IPC round-trip to
+        ``klicad_native_schematic_compose.compose``.  The C++ side
+        opens one ``SchLayoutTransaction``, materializes parts/sheets,
+        runs ELK + F-S1d connectivity-correct writeback, commits, saves.
 
-        Returns {ok, parts_placed, labels_placed, wires_placed, sch_path,
-                 models_lib_path, project_path}.
+        Returns a ComposeReport dict: ``{ok, error, parts_placed,
+        wires_emitted, labels_placed, crossings, total_wirelength,
+        bends, ...}``.
         """
-        from ._klicad_sch import to_schematic
-        return to_schematic(self, path, kicad=kicad, layout=layout,
-                            route=route, mode=mode)
-        """Generate a .kicad_sch file via the live KliCAD bindings.
+        from ._compose import compose_schematic
+        return compose_schematic(self, path, kicad=kicad, mode=mode)
 
-        Requires a running KliCAD instance (creates / uses one via klipy.klicad.KliCAD).
-        Returns a small status dict; the .kicad_sch is written to disk.
-        """
-        from ._klicad_sch import to_klicad_sch
-        return to_klicad_sch(self, path, kicad=kicad, route=route)
+    # F-S3 Phase C: to_schematic() deleted.  Use Circuit.compose()
+    # instead.  The legacy diff / strict / route / layout knobs are
+    # stubbed or deferred — see Circuit.compose docstring.
 
     def to_netlist(self, schematic_dir: str | None = None) -> str:
         """Emit this circuit's KiCad netlist.

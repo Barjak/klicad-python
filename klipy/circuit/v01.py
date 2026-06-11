@@ -740,7 +740,7 @@ def root(func: Callable) -> Callable:
         '    h.pop_sheet()\n'
     )
 
-    cir.to_schematic(sch_path, kicad=k, mode='replace')
+    cir.compose(sch_path, kicad=k, mode='replace')
 
     return func
 

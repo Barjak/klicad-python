@@ -275,71 +275,13 @@ def test_xsubckt_schematic_binding_roundtrip():
     assert q.spice_line() == "XQ1 D G S DO5T10BA"
 
 
-def test_to_schematic_rejects_bare_xsubckt():
-    """Without kicad_lib_id, schematic placement raises NotImplementedError
-    (the runtime path that prior code already exercised, plus a clearer
-    message)."""
-    from klipy.circuit._klicad_sch import _place_parts
-    c = Circuit(name="t", desc="")
-    c.add(XSubckt("U1", ["A", "B"], subckt="UNDEF"))
-    # Don't need a live KliCAD to hit the early raise.
-    with pytest.raises(NotImplementedError, match="no KliCAD symbol binding"):
-        _place_parts(c, kicad=None, models_lib_path=Path("/tmp/x.lib"))
-
-
-def test_to_schematic_snippet_for_xsubckt(monkeypatch, tmp_path):
-    """With a kicad_lib_id + kicad_pin_map, _place_parts generates the
-    expected schematic-authoring snippet for the XSubckt.
-
-    Uses a FakeKiCad that captures every run_python call instead of
-    sending it to a live KliCAD; that lets us inspect the generated
-    code without requiring a running session.
-    """
-    from klipy.circuit._klicad_sch import _place_parts
-
-    c = Circuit(name="t", desc="")
-    c.add(XSubckt(
-        "Q1", ["DRAIN", "GATE", "SOURCE"], subckt="DO5T10BA",
-        kicad_lib_id="Device:Q_NMOS",
-        kicad_pin_map={"1": "D", "2": "G", "3": "S"},
-    ))
-    c.add(XSubckt(
-        "D1", ["GND", "DRAIN"], subckt="SMF54A",
-        kicad_lib_id="Device:D",
-        kicad_pin_map={"1": "2", "2": "1"},
-    ))
-
-    class FakeKiCad:
-        def __init__(self):
-            self.calls = []
-            self.next_kiid = iter(range(1, 100))
-
-        def run_python(self, snippet: str):
-            self.calls.append(snippet)
-            kiid = next(self.next_kiid)
-            class R:
-                ok = True
-                result_repr = repr(f"kiid_{kiid}")
-            return R()
-
-    fake = FakeKiCad()
-    models_lib = tmp_path / "models.lib"
-    models_lib.write_text("")
-
-    placed = _place_parts(c, kicad=fake, models_lib_path=models_lib)
-
-    assert set(placed) == {"Q1", "D1"}
-    # Each part snippet contains the right add_symbol + Sim.Name + Sim.Type
-    snippets = "\n".join(fake.calls)
-    assert "'Device:Q_NMOS'" in snippets
-    assert "'Q1'" in snippets
-    assert "'DO5T10BA'" in snippets        # Sim.Name = subckt name
-    assert "'SUBCKT'" in snippets           # Sim.Type
-    assert "'Device:D'" in snippets
-    assert "'SMF54A'" in snippets
-    # Sim.Pins encodes the kicad_pin → spice_position mapping
-    assert "D=1" in snippets and "G=2" in snippets and "S=3" in snippets
-    assert "2=1" in snippets and "1=2" in snippets  # D1 reversed-pin TVS
+# F-S3 Phase C: tests test_to_schematic_rejects_bare_xsubckt and
+# test_to_schematic_snippet_for_xsubckt deleted alongside
+# _klicad_sch.py — they targeted internal helpers (_place_parts) of
+# the deleted file.  XSubckt validation now lives in compose; new
+# tests for that path can be added when XSubckt support lands in
+# Circuit.compose() (currently parts with kicad_lib_id == "" are
+# logged and skipped by compose_make_symbol).
 
 
 # ---- c.tran property + .tran emitted from to_spice_deck() --------------
@@ -473,7 +415,8 @@ def test_self_running_false_omits_control():
 # ---- write_project_shell (offline half of to_schematic) ----------------
 
 def test_write_project_shell_writes_files(tmp_path):
-    from klipy.circuit._klicad_sch import write_project_shell
+    # F-S3 Phase C: write_project_shell moved into _compose.py.
+    from klipy.circuit._compose import write_project_shell
     c = build_led_oscillator()
     sch = tmp_path / "led_osc.kicad_sch"
     out = write_project_shell(c, sch)
@@ -486,7 +429,7 @@ def test_write_project_shell_writes_files(tmp_path):
 
 def test_write_project_shell_no_kicad_needed(tmp_path):
     """Offline call must not attempt any IPC."""
-    from klipy.circuit._klicad_sch import write_project_shell
+    from klipy.circuit._compose import write_project_shell
     c = Circuit("tiny")
     c.add(R("R1", "A", "0", "1k"))
     c.add(R("R2", "A", "B", "1k"))

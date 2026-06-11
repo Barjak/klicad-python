@@ -138,7 +138,7 @@ def drive_demo(c: Circuit, proj_dir: Path) -> int:
     print(f"[1] KliCAD {ver} reachable")
 
     sch_path = proj_dir / f"{proj_dir.name}.kicad_sch"
-    result = c.to_schematic(sch_path, kicad=k, layout="spring", route=True)
+    result = c.compose(sch_path, kicad=k)
     print(f"[2] schematic generated: {result['parts_placed']} parts, "
           f"{result['labels_placed']} labels, "
           f"{result.get('wires_placed','?')} wires")
@@ -190,7 +190,7 @@ def main() -> int:
     args.proj_dir.mkdir(parents=True, exist_ok=True)
     sch_path = args.proj_dir / f"{args.proj_dir.name}.kicad_sch"
     if args.setup_only:
-        from klipy.circuit._klicad_sch import _bootstrap_project_files
+        from klipy.circuit._compose import _bootstrap_project_files
         pro, syml, mods = _bootstrap_project_files(c, sch_path)
         print(f"[setup] {pro}")
         print(f"[setup] {syml}")

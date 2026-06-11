@@ -64,7 +64,7 @@ def build_circuit() -> Circuit:
 
 def setup_only(c: Circuit) -> None:
     """Lay down the project + supporting files; don't connect to KliCAD."""
-    from klipy.circuit._klicad_sch import _bootstrap_project_files
+    from klipy.circuit._compose import _bootstrap_project_files
     pro_path, sym_lib, models_lib = _bootstrap_project_files(c, SCH_FILE)
     print(f"[setup] wrote project files in {PROJ_DIR}/")
     print(f"        - {pro_path.name}")
@@ -101,7 +101,7 @@ def drive_demo(c: Circuit) -> int:
     print(f"[2] project loaded: {PROJ_FILE.name}")
 
     # Generate the schematic into KliCAD's live state
-    result = c.to_schematic(SCH_FILE, kicad=k)
+    result = c.compose(SCH_FILE, kicad=k)
     print(f"[3] schematic generated: {result['parts_placed']} parts, "
           f"{result['labels_placed']} pin labels")
     print(f"    models lib: {result['models_lib_path']}")

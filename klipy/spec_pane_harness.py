@@ -89,7 +89,7 @@ def main(argv: list[str]) -> int:
         '    h.pop_sheet()\n'
     )
 
-    cir.to_schematic(sch_path, kicad=k, mode='replace')
+    cir.compose(sch_path, kicad=k, mode='replace')
     return 0
 
 
