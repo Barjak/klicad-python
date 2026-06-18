@@ -159,6 +159,22 @@ def _subcircuit_instance_to_program_sheet(p: Any) -> dict[str, Any] | None:
     if definition is None:
         return None
     def_name = getattr(definition, "name", "") or getattr(p, "subckt", "") or ""
+
+    # M4 closure: serialize the child Circuit's parts so the C++ side
+    # can materialize them on the child SCH_SCREEN.  Each entry follows
+    # the same ProgramPart shape as the parent's parts list, so the C++
+    # compose binding can use the same materializer (compose_make_symbol
+    # + transient seed-label drop) against the child screen.  Without
+    # this, the child sheet has only its hier labels and no internal
+    # symbols, leaving every cross-sheet net half-connected and ERC
+    # firing pin_not_connected.
+    child_parts: list[dict[str, Any]] = []
+    for cp in getattr(definition, "parts", []) or []:
+        try:
+            child_parts.append(_part_to_program(cp))
+        except Exception:
+            continue
+
     return {
         "ref":                 p.ref,
         "definition_filename": _sanitize_subckt_filename(def_name),
@@ -166,6 +182,7 @@ def _subcircuit_instance_to_program_sheet(p: Any) -> dict[str, Any] | None:
         "repeat_count":        int(getattr(p, "repeat_count", 1) or 1),
         "repeat_instances":    list(getattr(p, "repeat_instances", []) or []),
         "extra_fields":        {},
+        "child_parts":         child_parts,
     }
 
 
