@@ -41,7 +41,10 @@ from klipy.errors import ConnectionError as KipyConnectionError
 SWITCH_PROJECT_DIR = Path(__file__).resolve().parent / "fixtures" / "switch_project"
 SWITCH_PCB = SWITCH_PROJECT_DIR / "switch.kicad_pcb"
 SWITCH_SCH = SWITCH_PROJECT_DIR / "switch.kicad_sch"
-INSTALL_DIR = Path("/Users/shopnew/kicad-build/install/KliCAD.app")
+# Override with KLICAD_INSTALL_DIR on non-macOS boxes (the demo_sym_lib /
+# demo_fp_lib fixtures self-skip if the path doesn't exist).
+INSTALL_DIR = Path( os.environ.get( "KLICAD_INSTALL_DIR",
+                                    "/Users/shopnew/kicad-build/install/KliCAD.app" ) )
 
 # Per-platform crash-report locations.  macOS leaves a .ips file in
 # DiagnosticReports.  Linux uses systemd-coredump under /var/lib (root-owned
